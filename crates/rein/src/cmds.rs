@@ -2035,7 +2035,9 @@ pub fn eval_answers(
         ("failed", Value::Array(failed.clone())),
         ("answers_file", s(out)),
     ]))
-    .next("grade per the 0–4 rubric, then: rein eval financegym -f <questions> --grades grades.json");
+    .next(
+        "grade per the 0–4 rubric, then: rein eval financegym -f <questions> --grades grades.json",
+    );
     if !failed.is_empty() {
         result = result.warn(format!(
             "{} question(s) did not satisfy — absent from {out}, classified honestly in the ledger; rerun resumes and retries them",
