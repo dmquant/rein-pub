@@ -245,7 +245,9 @@ deterministic core, and each refuses with a stated reason when unconfigured.
 
 ## Design, guarantees, provenance
 
-The full design is `docs/Rein-Financial-Research-Harness-Design.md` (v0.2);
+A detailed introduction in Simplified Chinese, with diagrams, is at
+`docs/INTRO.zh-CN.md`. The full design is
+`docs/Rein-Financial-Research-Harness-Design.md` (v0.2);
 `docs/INVARIANTS.md` maps all **33 invariants → production symbol → reddening
 test — 33/33 green**. Deviations from the design text (two objections, the
 hand-binding hash exclusion, the native wire mirror) are recorded decisions
