@@ -46,9 +46,8 @@ M3), the same way an outside consumer would.
 
 ## Milestones
 
-M0 contracts ✅ · M1 local deterministic proof (SQLite ledger, CAS,
-commit/readback, strict replay). All 33 invariants carry green
-reddening tests (docs/INVARIANTS.md). Verified against reality: live FMP
-pulls, a real agy/gemini valuation surviving the validator gauntlet, capsules
-landing at gate's gate through the installed binary, and evidence bundles the
-binary publishes to AGORA itself.
+M0–M5 landed in order, each with §13's acceptance tests green. All 33
+invariants carry green reddening tests (docs/INVARIANTS.md). Verified against
+reality: live FMP pulls, a real agy/gemini valuation surviving the validator
+gauntlet, capsules landing at gate's gate through the installed binary, and
+evidence bundles the binary publishes to AGORA itself.
