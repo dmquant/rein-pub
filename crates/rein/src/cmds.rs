@@ -685,6 +685,16 @@ pub fn default_contract(task_type: &str) -> OutputContract {
                 vs
             },
         },
+        // Benchmark answers: one markdown artifact, minimal validators.
+        "answer" => OutputContract {
+            required_artifacts: vec![RequiredArtifact {
+                name: "answer.md".into(),
+                media_type: "text/markdown".into(),
+                schema_ref: None,
+                min_bytes: Some(80),
+            }],
+            validators: base.clone(),
+        },
         // Harness-mechanics contract for the conformance fixtures (M1 shape).
         "fixture" => OutputContract {
             required_artifacts: vec![
@@ -1855,4 +1865,182 @@ pub fn evidence_publish(
         ("room", s(room)),
         ("hub_response", resp),
     ])))
+}
+
+/// Batch-answer a FinanceGym-style question file: every question runs as a
+/// REAL attempt (receipts, capture-pinned question, honest classification),
+/// and satisfaction rides selection receipts — so the run is resumable:
+/// interrupt any time, rerun, and answered questions are skipped.
+pub fn eval_answers(
+    ctx: &Ctx,
+    file: Option<&str>,
+    hand: &str,
+    limit: Option<usize>,
+    offset: usize,
+    out: &str,
+) -> CmdResult {
+    let text = match file {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| CliError::new(ExitCode::NotFound, format!("{path}: {e}")))?,
+        None => rein_finance::eval::SAMPLE_QUESTIONS.to_string(),
+    };
+    let questions = rein_finance::eval::load_questions_jsonl(&text)
+        .map_err(|e| CliError::new(ExitCode::Usage, e))?;
+    let slice: Vec<_> = questions
+        .into_iter()
+        .skip(offset)
+        .take(limit.unwrap_or(usize::MAX))
+        .collect();
+    if slice.is_empty() {
+        return Err(CliError::new(
+            ExitCode::Usage,
+            "offset/limit selected no questions",
+        ));
+    }
+
+    let (ws, mut store) = ctx.open()?;
+    let broker = ctx.broker(&ws)?;
+    let clock = SystemClock;
+    let cas = rein_runtime::cas::Cas::new(ws.objects());
+    let mut engine = build_engine(ctx, &ws, &mut store, &clock, broker)?;
+
+    // One plan collects the batch's tasks (merged across runs).
+    let plan_ref_id = plan_ref("plan:financegym@1")?;
+    let mut plan =
+        engine
+            .store
+            .get_plan(plan_ref_id.as_str())
+            .unwrap_or(rein_core::entities::Plan {
+                plan_ref: plan_ref_id.clone(),
+                nodes: vec![],
+            });
+
+    let mut answers: std::collections::BTreeMap<String, String> = Default::default();
+    let mut answered = 0usize;
+    let mut resumed = 0usize;
+    let mut failed: Vec<Value> = Vec::new();
+
+    for q in &slice {
+        let tref = task_ref(&format!("task:fg-{}@1", q.id))?;
+        let log = engine.store.load_full_log()?;
+
+        let existing_answer = |log: &rein_core::receipts::ReceiptLog| -> Option<String> {
+            let sel = rein_core::selection::latest_selection(log, &tref)?;
+            let attempt = sel.0.selected_attempt?;
+            for e in log.for_attempt(&attempt) {
+                if let rein_core::receipts::ReceiptBody::Commit { artifacts, .. } = &e.body {
+                    for a in artifacts {
+                        if a.name == "answer.md" {
+                            if let Some(d) = &a.readback_digest {
+                                if let Ok(bytes) = cas.read_verified(d) {
+                                    return Some(String::from_utf8_lossy(&bytes).to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        };
+
+        if rein_core::selection::task_satisfied(&log, &tref) {
+            if let Some(text) = existing_answer(&log) {
+                answers.insert(q.id.clone(), text);
+                resumed += 1;
+                continue;
+            }
+        }
+
+        // Pin the question itself as a capture — like every other input.
+        let qbytes = serde_json::to_vec_pretty(&serde_json::json!({
+            "task_id": q.id, "question": q.question, "cutoff": q.cutoff,
+        }))
+        .expect("serializes");
+        let digest = cas
+            .put(&qbytes)
+            .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+        let as_of = rein_core::time::Timestamp::parse(&format!("{}T00:00:00Z", q.cutoff)).ok();
+        engine
+            .store
+            .insert_capture(&rein_runtime::store::CaptureRow {
+                digest: digest.clone(),
+                tool: "eval.financegym".into(),
+                params: q.id.clone(),
+                provider: "financegym-public".into(),
+                media_type: "application/json".into(),
+                as_of,
+                as_of_basis: as_of.map(|_| "provider".to_string()),
+                retrieved_at: clock.now(),
+                url: None,
+                host: None,
+                note: Some(format!("financegym:{}", q.id)),
+            })?;
+
+        if !plan.nodes.iter().any(|n| n.task_ref == tref) {
+            plan.nodes.push(rein_core::entities::PlanNode {
+                task_ref: tref.clone(),
+                depends_on: vec![],
+            });
+            engine.store.put_plan(&plan)?;
+        }
+        engine.store.put_task(&rein_core::entities::TaskVersion {
+            task_ref: tref.clone(),
+            plan_ref: plan_ref_id.clone(),
+            task_type: "answer".into(),
+            output_contract: default_contract("answer"),
+            satisfaction_criteria: vec!["first-valid-deterministic@1".into()],
+            inputs: vec![
+                rein_core::ids::ArtifactRef::parse(&format!("artifact:{digest}"))
+                    .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?,
+            ],
+            universe: vec![],
+        })?;
+
+        eprintln!(
+            "[{}/{}] {} …",
+            answered + resumed + failed.len() + 1,
+            slice.len(),
+            q.id
+        );
+        match engine.run_task(&tref, Some(hand), None) {
+            Ok(report) => {
+                if report.task_satisfied {
+                    let log = engine.store.load_full_log()?;
+                    if let Some(text) = existing_answer(&log) {
+                        answers.insert(q.id.clone(), text);
+                        answered += 1;
+                        continue;
+                    }
+                }
+                let outcome = report
+                    .outcome
+                    .map(|(o, r)| format!("{o:?} ({})", r.0))
+                    .unwrap_or_else(|| format!("{:?}", report.final_state));
+                failed.push(json!({"id": q.id, "outcome": outcome}));
+            }
+            Err(e) => failed.push(json!({"id": q.id, "outcome": format!("engine: {e}")})),
+        }
+    }
+
+    std::fs::write(
+        out,
+        serde_json::to_vec_pretty(&answers).expect("serializes"),
+    )
+    .map_err(|e| CliError::new(ExitCode::Internal, format!("{out}: {e}")))?;
+
+    let mut result = CmdOutput::ok(kv(&[
+        ("questions", json!(slice.len())),
+        ("answered", json!(answered)),
+        ("resumed", json!(resumed)),
+        ("failed", Value::Array(failed.clone())),
+        ("answers_file", s(out)),
+    ]))
+    .next("grade per the 0–4 rubric, then: rein eval financegym -f <questions> --grades grades.json");
+    if !failed.is_empty() {
+        result = result.warn(format!(
+            "{} question(s) did not satisfy — absent from {out}, classified honestly in the ledger; rerun resumes and retries them",
+            failed.len()
+        ));
+    }
+    Ok(result)
 }

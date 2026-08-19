@@ -157,6 +157,21 @@ enum EvalCmd {
     },
     /// Rank hands on the estate's own settled valuations
     Internal,
+    /// Batch-answer a question file: each question runs as a real, resumable
+    /// attempt through the chosen hand; answers land in one JSON file
+    Answers {
+        #[arg(short, long)]
+        file: Option<String>,
+        #[arg(long)]
+        hand: String,
+        /// Answer at most this many questions this run
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value = "answers.json")]
+        out: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -594,6 +609,13 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
                 grades,
             } => cmds::eval_financegym(ctx, file.as_deref(), answers.as_deref(), grades.as_deref()),
             EvalCmd::Internal => cmds::eval_internal(ctx),
+            EvalCmd::Answers {
+                file,
+                hand,
+                limit,
+                offset,
+                out,
+            } => cmds::eval_answers(ctx, file.as_deref(), hand, *limit, *offset, out),
         },
         Cmd::Propose { cmd } => match cmd {
             ProposeCmd::ToGate {

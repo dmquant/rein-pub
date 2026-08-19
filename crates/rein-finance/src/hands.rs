@@ -555,6 +555,32 @@ impl AgyHand {
     }
 }
 
+/// Pull a pinned benchmark question `{question, cutoff}` out of the inputs.
+fn pinned_question(ctx: &HandContext<'_>) -> Option<(String, String)> {
+    for entry in read_inputs_manifest(ctx.inputs_dir) {
+        if !entry.note.contains("financegym") {
+            continue;
+        }
+        let bytes = std::fs::read(ctx.inputs_dir.join(&entry.file)).ok()?;
+        let v: Value = serde_json::from_slice(&bytes).ok()?;
+        let q = v.get("question")?.as_str()?.to_string();
+        let cutoff = v
+            .get("cutoff")
+            .and_then(Value::as_str)
+            .unwrap_or("(unstated)")
+            .to_string();
+        return Some((q, cutoff));
+    }
+    None
+}
+
+fn wants_answer(ctx: &HandContext<'_>) -> bool {
+    ctx.contract
+        .required_artifacts
+        .iter()
+        .any(|a| a.name == "answer.md")
+}
+
 impl RuntimeHand for AgyHand {
     fn selector(&self) -> &str {
         "agy"
@@ -565,14 +591,33 @@ impl RuntimeHand for AgyHand {
             path: self.workdir.clone(),
             source,
         })?;
-        let prompt = self.prompt_for(ctx);
+        // Q&A mode (benchmark answers): free-text response, no JSON schema.
+        let answer_mode = wants_answer(ctx);
+        let prompt = if answer_mode {
+            let (question, cutoff) = pinned_question(ctx).unwrap_or_else(|| {
+                (
+                    "(no pinned question found in inputs)".to_string(),
+                    "(unstated)".to_string(),
+                )
+            });
+            format!(
+                "You are answering a point-in-time financial research question inside the Rein harness.\n\
+                 Knowledge cutoff for this question: {cutoff}. Treat anything after that date as unknown — never state post-cutoff events as fact; label any projection as a forecast.\n\
+                 Write a thorough, analytical answer in markdown (no preamble, no code fences around the whole answer). Cite concrete figures where you know them.\n\nQuestion: {question}"
+            )
+        } else {
+            self.prompt_for(ctx)
+        };
         // One attempt, no internal retry loop — invariant 11 by construction.
-        let out = std::process::Command::new(&self.binary)
-            .arg("--model")
+        let mut cmd = std::process::Command::new(&self.binary);
+        cmd.arg("--model")
             .arg(&self.model)
-            .args(["--output-format", "json"])
-            .arg("--json-schema")
-            .arg(serde_json::to_string(&Self::output_schema()).expect("static schema"))
+            .args(["--output-format", "json"]);
+        if !answer_mode {
+            cmd.arg("--json-schema")
+                .arg(serde_json::to_string(&Self::output_schema()).expect("static schema"));
+        }
+        let out = cmd
             .arg("--print-timeout")
             .arg(format!("{}s", self.timeout_s))
             .arg("--print")
@@ -643,7 +688,10 @@ impl RuntimeHand for AgyHand {
             .map_or(!text.is_empty(), |s| s == "SUCCESS")
             && !text.is_empty();
         let mut claimed = BTreeMap::new();
-        if ok {
+        if ok && answer_mode {
+            // The response text IS the answer artifact.
+            write_artifact(ctx.output_dir, "answer.md", text.as_bytes(), &mut claimed)?;
+        } else if ok {
             if let Some(json) = extract_trailing_json(&text) {
                 let assumptions = json.get("assumptions").cloned().unwrap_or(Value::Null);
                 let memo = json
@@ -807,6 +855,17 @@ impl RuntimeHand for FinanceOps {
                 .iter()
                 .any(|a| a.name == name)
         };
+
+        if wants("answer.md") {
+            // Deterministic placeholder answers — for pipeline testing only,
+            // clearly labeled as such; never a substitute for a real hand.
+            let (question, cutoff) = pinned_question(ctx)
+                .unwrap_or_else(|| ("(no pinned question)".to_string(), "(unstated)".to_string()));
+            let answer = format!(
+                "# Deterministic placeholder answer\n\nThis is `finance:ops` echoing the question for pipeline testing — it is not research.\n\n**Question (cutoff {cutoff}):** {question}\n\nNo claim is made here; grade this tier 0.\n"
+            );
+            write_artifact(ctx.output_dir, "answer.md", answer.as_bytes(), &mut claimed)?;
+        }
 
         if wants("verdict.json") {
             let claims: Option<crate::schemas::Claims> =

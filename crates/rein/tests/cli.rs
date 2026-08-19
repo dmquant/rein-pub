@@ -196,3 +196,57 @@ fn doctor_and_status_are_green_on_a_fresh_workspace() {
     assert_eq!(code, 0);
     assert_eq!(json["data"]["missions"], 1);
 }
+
+#[test]
+fn eval_answers_runs_real_attempts_and_resumes() {
+    let cli = Cli::new();
+    setup(&cli);
+    // Two public-FinanceGym-shaped questions (task_id, no expectations).
+    write(
+        cli.ws.path(),
+        "qs.jsonl",
+        r#"{"task_id":"q-aa","question":"What moved rates?","cutoff":"2025-06-05"}
+{"task_id":"q-bb","question":"Who supplies the wafers?","cutoff":"2025-08-05"}
+"#,
+    );
+    let (code, json, _) = cli.run(&[
+        "eval",
+        "answers",
+        "-f",
+        "qs.jsonl",
+        "--hand",
+        "finance:ops",
+        "--out",
+        "a.json",
+    ]);
+    assert_eq!(code, 0);
+    assert_eq!(json["data"]["answered"], 2);
+    assert_eq!(json["data"]["resumed"], 0);
+    let answers: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cli.ws.path().join("a.json")).unwrap())
+            .unwrap();
+    assert!(answers["q-aa"]
+        .as_str()
+        .unwrap()
+        .contains("What moved rates?"));
+
+    // Rerun: satisfaction rides selection receipts — everything resumes, no
+    // new attempts.
+    let (_, before, _) = cli.run(&["attempt", "list"]);
+    let n_before = before["data"].as_array().unwrap().len();
+    let (code2, json2, _) = cli.run(&[
+        "eval",
+        "answers",
+        "-f",
+        "qs.jsonl",
+        "--hand",
+        "finance:ops",
+        "--out",
+        "a.json",
+    ]);
+    assert_eq!(code2, 0);
+    assert_eq!(json2["data"]["resumed"], 2);
+    assert_eq!(json2["data"]["answered"], 0);
+    let (_, after, _) = cli.run(&["attempt", "list"]);
+    assert_eq!(after["data"].as_array().unwrap().len(), n_before);
+}
