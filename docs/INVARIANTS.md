@@ -41,8 +41,8 @@ M0-owed tests live in `crates/rein-core/tests/invariants.rs` and are named
 | 28 | Secrets are references; quarantine = verdict + receipt (C6) | **M0** ✅ (schema-side; brokered injection M2) | `secretref::Redactor`, `receipts::ReceiptBody::Quarantine` | `inv28__secretref__…` |
 | 29 | Grants explicit, expiring, non-transitive; TOFU | **M2** ✅ | `workspace::SecretBroker::env_for` (absence is never permission) + `entities::CapabilityGrant` shape | `inv29__secretbroker_env_for__…` |
 | 30 | Incremental UTF-8 decode retaining partial sequences | **M0** ✅ | `capture::Utf8StreamDecoder` | `inv30__capture_utf8streamdecoder__…` |
-| 31 | Absence is stated, never blank | M4 (schema seed at M0: `axes::Axis::NotYetRecorded`, `axes::ExternalAxis`) | — | owed M4 |
-| 32 | Disabled actions explain; statuses name their receipt | M4 | — | owed M4 |
+| 31 | Absence is stated, never blank | **M4** ✅ | the screens' stated-absence rows (`tui::screens`) | `inv31__screens__…` (headless render, rein/tests/tui.rs) |
+| 32 | Disabled actions explain; statuses name their receipt | **M4** ✅ | `tui::data::propose_action_state`; outcome cells carry `per rcpt_…` | `inv32__action_gating__…` (headless render) |
 | 33 | Findings a gate no longer holds are still reported | **M3** ✅ (pane face owed M4) | `rein_propose::build_capsule_objects` (findings ride every payload) + `propose status` findings_reported | `inv9_33__capsule_objects__…` (rein-propose) |
 
 Accepted resolutions the code embodies (recorded in the room before

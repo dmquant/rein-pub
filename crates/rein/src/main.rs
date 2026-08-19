@@ -3,6 +3,7 @@
 
 mod cmds;
 mod out;
+mod tui;
 
 use clap::{Parser, Subcommand};
 use cmds::{CliError, Ctx, WaitAssertion};
@@ -44,6 +45,8 @@ enum Cmd {
     Status,
     /// Diagnostics: ledger integrity, append-only triggers, CAS probe, config boundary
     Doctor,
+    /// Attach the four-screen TUI (§10)
+    Tui,
     /// Provider pins (invariant 8)
     Provider {
         #[command(subcommand)]
@@ -412,6 +415,7 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
         Cmd::Init { workspace_ref } => cmds::init(ctx, workspace_ref),
         Cmd::Status => cmds::status(ctx),
         Cmd::Doctor => cmds::doctor(ctx),
+        Cmd::Tui => cmds::tui(ctx),
         Cmd::Provider { cmd } => match cmd {
             ProviderCmd::Add {
                 name,

@@ -1667,3 +1667,12 @@ pub fn propose_status(ctx: &Ctx, attempt: &str, gate_project: Option<&str>) -> C
         ("findings_reported", Value::Array(findings)),
     ])))
 }
+
+// ---- M4: the TUI ------------------------------------------------------------
+
+pub fn tui(ctx: &Ctx) -> CmdResult {
+    let (ws, mut store) = ctx.open()?;
+    crate::tui::run_tui(&ws, &mut store)
+        .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+    Ok(CmdOutput::ok(Value::Null))
+}
