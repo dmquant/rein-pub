@@ -4,8 +4,9 @@
 //! layer". A CI test, not a convention.
 //!
 //! Cross-product integration goes through the installed `gate` *binary*
-//! (`rein propose --to-gate`, M3) — the same way an outside consumer would
-//! arrive.
+//! (`rein propose to-gate`, M3) with a native wire-format mirror — the same
+//! way an outside consumer would arrive. No gate-* crate appears in the
+//! resolved graph at all: the build is standalone.
 
 use std::process::Command;
 
