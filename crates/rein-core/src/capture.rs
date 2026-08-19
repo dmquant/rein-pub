@@ -1,4 +1,4 @@
-//! Capture: what a run *actually emitted*, on every channel (JOINING §5's
+//! Capture: what a run *actually emitted*, on every channel (AGORA's
 //! capture-artifact shape), and the incremental UTF-8 decoder (invariant 30).
 //!
 //! Child process exit codes live here — inside evidence — and nowhere else.

@@ -1,4 +1,5 @@
 /target
 .rein/
+/docs/JOINING.md
 *.evidence.tar.zst
 .DS_Store
