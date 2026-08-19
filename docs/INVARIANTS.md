@@ -6,8 +6,8 @@ C1–C6. A guarantee lands only with a test that reddens when it is deleted, and
 every mutation test names a production symbol; each invariant's test is owed at
 the milestone where its production symbol first exists.
 
-M0-owed tests live in `crates/rein-core/tests/invariants.rs` and are named
-`invNN__<symbol>__<claim>`. Status: **M0 rows all green** (2026-08-19).
+Tests are named `invNN__<symbol>__<claim>` across the crates\' suites.
+Status: **all 33 rows green** (2026-08-19, M0–M5 landed in sequence).
 
 | # | Invariant (short) | Milestone | Production symbol | Test |
 |---|---|---|---|---|
@@ -31,7 +31,7 @@ M0-owed tests live in `crates/rein-core/tests/invariants.rs` and are named
 | 18 | Citation closure validator | **M2** ✅ | validator `citation-closure@1` | `inv17_18__citation_closure__…` (m2_acceptance) |
 | 19 | Publisher spread; syndication ≠ corroboration | **M2** ✅ | `capture::CaptureStore::capture_page` (host cap) | `inv19__capture_page__…` (m2_acceptance) |
 | 20 | Coverage denominators over enumerable sets; drops counted | **M2** ✅ | validator `coverage-denominator@1` + `comps` counted exclusions | `inv20__coverage_denominator__…` + compute suite |
-| 21 | Direct/inherited never summed; falsifier discipline | **M2** ✅ (falsifier face; direct-vs-inherited aggregation arrives with verify/settle at M5) | `schemas::claim_admissible`, validator `falsifier-present@1` | `inv21__schemas_claim_admissible__…` |
+| 21 | Direct/inherited never summed; falsifier discipline | **M2** ✅ falsifier face → **M5** ✅ aggregation face | `schemas::claim_admissible`, `ops::direct_score` (inherited reported, structurally unsummable) | `inv21__schemas_claim_admissible__…` + `inv21__ops_direct_score__…` (m5_eval) |
 | 22 | Every transition appends a receipt; state resolves from ledger | **M0** ✅ → **M1** ✅ re-pointed at the SQLite WAL ledger (append-only by trigger) | `state::apply_transition`, `store::Store` | `inv22__state_transition_apply__…` + `inv22__store_persist__…` (m1_acceptance) |
 | 23 | Idempotency scoped to request (C4); retry mints generation | **M0** ✅ | `idempotency::IdempotencyKey` | `inv23__idempotency_key__…` |
 | 24 | Fence generations from day one; stale generations cannot commit | **M0** ✅ | `fence::guard_commit`, `fence::issue_next_generation` | `inv24__fence_generation__…` |

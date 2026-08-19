@@ -9,11 +9,14 @@
 //! Domain expertise lives in profiles, skills, tools and validators — never
 //! in runtime code paths.
 
+pub mod agora;
 pub mod capture;
 pub mod datum;
+pub mod eval;
 pub mod fmp;
 pub mod frame;
 pub mod hands;
+pub mod ops;
 pub mod schemas;
 pub mod skills;
 pub mod validators;

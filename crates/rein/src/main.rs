@@ -134,10 +134,38 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ProposeCmd,
     },
+    /// Evaluation, two-track (§4): financegym research scoring + internal
+    /// settled-material hand ranking. Scores never touch TerminalOutcome.
+    Eval {
+        #[command(subcommand)]
+        cmd: EvalCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum EvalCmd {
+    /// Score a FinanceGym-style question set (bundled sample when no file)
+    Financegym {
+        #[arg(short, long)]
+        file: Option<String>,
+        /// JSON map of question id → answer text to score
+        #[arg(long)]
+        answers: Option<String>,
+    },
+    /// Rank hands on the estate's own settled valuations
+    Internal,
 }
 
 #[derive(Subcommand, Debug)]
 enum EvidenceCmd {
+    /// Publish a bundle summary to an AGORA room (explicit, never ambient)
+    Publish {
+        attempt: String,
+        #[arg(long)]
+        room: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+    },
     /// Assemble an attempt's evidence into a .tar.zst bundle
     Bundle {
         attempt: String,
@@ -551,8 +579,17 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
                 cmds::evidence_bundle(ctx, attempt, out.as_deref())
             }
             EvidenceCmd::Verify { path } => cmds::evidence_verify(ctx, path),
+            EvidenceCmd::Publish { attempt, room, hub } => {
+                cmds::evidence_publish(ctx, attempt, room.as_deref(), hub.as_deref())
+            }
         },
         Cmd::Recover => cmds::recover_queue(ctx),
+        Cmd::Eval { cmd } => match cmd {
+            EvalCmd::Financegym { file, answers } => {
+                cmds::eval_financegym(ctx, file.as_deref(), answers.as_deref())
+            }
+            EvalCmd::Internal => cmds::eval_internal(ctx),
+        },
         Cmd::Propose { cmd } => match cmd {
             ProposeCmd::ToGate {
                 attempt,

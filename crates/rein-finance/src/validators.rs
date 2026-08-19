@@ -88,6 +88,95 @@ pub fn register_finance_validators(reg: &mut ValidatorRegistry, ctx: FinanceCont
     reg.register(Box::new(CoverageDenominator {
         name: v("coverage-denominator@1"),
     }));
+    reg.register(Box::new(OpsDiscipline {
+        name: v("ops-discipline@1"),
+        ctx,
+    }));
+}
+
+// ---- ops-discipline (M5): verify / settle / monitor artifacts --------------
+
+struct OpsDiscipline {
+    name: ValidatorRef,
+    ctx: FinanceContext,
+}
+
+impl OpsDiscipline {
+    fn pinned_input(
+        &self,
+        input: &ValidationInput<'_>,
+        note_tag: &str,
+    ) -> Option<serde_json::Value> {
+        for pin in &input.pack.inputs {
+            if !pin.note.contains(note_tag) {
+                continue;
+            }
+            let digest = pin.artifact_ref.as_str().trim_start_matches("artifact:");
+            if let Ok(d) = rein_core::canon::Sha256Digest::parse(digest) {
+                if let Ok(bytes) = self.ctx.cas.read_verified(&d) {
+                    return serde_json::from_slice(&bytes).ok();
+                }
+            }
+        }
+        None
+    }
+}
+
+impl ArtifactValidator for OpsDiscipline {
+    fn name(&self) -> &ValidatorRef {
+        &self.name
+    }
+
+    fn validate(&self, input: &ValidationInput<'_>) -> ValidatorVerdict {
+        use crate::ops::*;
+        match input.artifact.name.as_str() {
+            "verdict.json" => {
+                let v: Verdicts = match serde_json::from_slice(input.bytes) {
+                    Ok(v) => v,
+                    Err(e) => return fail(format!("verdict.json does not parse: {e}")),
+                };
+                let claim_ids: Vec<String> = self
+                    .pinned_input(input, "claims")
+                    .and_then(|j| serde_json::from_value::<crate::schemas::Claims>(j).ok())
+                    .map(|c| c.claims.iter().map(|cl| cl.id.clone()).collect())
+                    .unwrap_or_default();
+                match check_verdicts(&v, &claim_ids) {
+                    Ok(()) => ValidatorVerdict::Passed,
+                    Err(e) => fail(e.to_string()),
+                }
+            }
+            "settlement.json" => {
+                let s: Settlements = match serde_json::from_slice(input.bytes) {
+                    Ok(s) => s,
+                    Err(e) => return fail(format!("settlement.json does not parse: {e}")),
+                };
+                match check_settlements(&s, s.coverage.due) {
+                    Ok(()) => ValidatorVerdict::Passed,
+                    Err(e) => fail(e.to_string()),
+                }
+            }
+            "drivers-diff.json" => {
+                let d: DriversDiff = match serde_json::from_slice(input.bytes) {
+                    Ok(d) => d,
+                    Err(e) => return fail(format!("drivers-diff.json does not parse: {e}")),
+                };
+                let prior = self
+                    .pinned_input(input, "series-prior")
+                    .and_then(|j| serde_json::from_value(j).ok());
+                let new = self
+                    .pinned_input(input, "series-new")
+                    .and_then(|j| serde_json::from_value(j).ok());
+                match (prior, new) {
+                    (Some(p), Some(n)) => match check_drivers_diff(&d, &p, &n) {
+                        Ok(()) => ValidatorVerdict::Passed,
+                        Err(e) => fail(e.to_string()),
+                    },
+                    _ => fail("pinned prior/new series absent — the diff cannot be recomputed"),
+                }
+            }
+            _ => ValidatorVerdict::Passed,
+        }
+    }
 }
 
 fn parse_assumptions(input: &ValidationInput<'_>) -> Result<Assumptions, ValidatorVerdict> {

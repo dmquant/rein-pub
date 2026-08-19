@@ -780,3 +780,181 @@ fn which(name: &str) -> Option<PathBuf> {
     }
     None
 }
+// ---- finance:ops — deterministic verify / settle / monitor hand -------------
+
+/// Runs the §4 ops task types deterministically from pinned inputs: verify
+/// (verdicts from a pinned claims.json + meta.json naming the producer hand),
+/// settle (rows derived from a pinned due.json, verdicts via
+/// [`crate::ops::settle_verdict`] — never invented), monitor (diff recomputed
+/// from two pinned series). Which artifacts it stages is the contract's call.
+pub struct FinanceOps;
+
+impl RuntimeHand for FinanceOps {
+    fn selector(&self) -> &str {
+        "finance:ops"
+    }
+
+    fn run(&self, ctx: &HandContext<'_>) -> Result<HandRunOutcome, HandError> {
+        use crate::ops::*;
+        let captures = load_captures(ctx);
+        let by_note = |tag: &str| -> Option<&LoadedCapture> {
+            captures.iter().find(|c| c.note.contains(tag))
+        };
+        let mut claimed = BTreeMap::new();
+        let wants = |name: &str| {
+            ctx.contract
+                .required_artifacts
+                .iter()
+                .any(|a| a.name == name)
+        };
+
+        if wants("verdict.json") {
+            let claims: Option<crate::schemas::Claims> =
+                by_note("claims").and_then(|c| serde_json::from_value(c.json.clone()).ok());
+            let meta = by_note("meta");
+            let producer = meta
+                .and_then(|m| m.json.get("producer_hand"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("(unrecorded)")
+                .to_string();
+            let verified_ref = meta
+                .and_then(|m| m.json.get("verified_attempt_ref"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("rein:attempt_000000")
+                .to_string();
+            let rows = claims
+                .map(|c| {
+                    c.claims
+                        .iter()
+                        .map(|cl| VerdictRow {
+                            claim_id: cl.id.clone(),
+                            verdict: Verdict::Inconclusive,
+                            refutation_condition: cl
+                                .falsifier
+                                .clone()
+                                .unwrap_or_else(|| format!("evidence deciding claim {}", cl.id)),
+                            basis: EvidenceBasis::Direct {
+                                refs: by_note("claims")
+                                    .map(|c| vec![format!("artifact:{}", c.digest)])
+                                    .unwrap_or_default(),
+                            },
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let verdicts = Verdicts {
+                schema: VERDICTS_SCHEMA.to_string(),
+                verified_attempt_ref: verified_ref,
+                producer_hand: producer,
+                challenger_hand: "finance:ops".to_string(),
+                rows,
+            };
+            let bytes = serde_json::to_vec_pretty(&verdicts).expect("serializes");
+            write_artifact(ctx.output_dir, "verdict.json", &bytes, &mut claimed)?;
+        }
+
+        if wants("settlement.json") {
+            #[derive(serde::Deserialize)]
+            struct DueRow {
+                subject: String,
+                valuation_attempt_ref: String,
+                horizon: Timestamp,
+                implied_per_share: f64,
+                market_at_valuation: f64,
+                #[serde(default)]
+                realized: Option<Realized>,
+            }
+            let due_rows: Vec<DueRow> = by_note("due")
+                .and_then(|c| serde_json::from_value(c.json.clone()).ok())
+                .unwrap_or_default();
+            let rows: Vec<SettleRow> = due_rows
+                .into_iter()
+                .map(|d| {
+                    let verdict = settle_verdict(
+                        d.implied_per_share,
+                        d.market_at_valuation,
+                        d.realized.as_ref(),
+                    );
+                    SettleRow {
+                        subject: d.subject,
+                        valuation_attempt_ref: d.valuation_attempt_ref,
+                        horizon: d.horizon,
+                        implied_per_share: d.implied_per_share,
+                        market_at_valuation: d.market_at_valuation,
+                        realized: d.realized,
+                        verdict,
+                    }
+                })
+                .collect();
+            let expired = rows
+                .iter()
+                .filter(|r| r.verdict == SettleVerdict::ExpiredUnobserved)
+                .count();
+            let settlements = Settlements {
+                schema: SETTLEMENTS_SCHEMA.to_string(),
+                coverage: SettleCoverage {
+                    due: rows.len(),
+                    settled: rows.len() - expired,
+                    expired_unobserved: expired,
+                },
+                rows,
+            };
+            let bytes = serde_json::to_vec_pretty(&settlements).expect("serializes");
+            write_artifact(ctx.output_dir, "settlement.json", &bytes, &mut claimed)?;
+        }
+
+        if wants("drivers-diff.json") {
+            let prior = by_note("series-prior");
+            let new = by_note("series-new");
+            if let (Some(p), Some(n)) = (prior, new) {
+                let ps: Option<crate::compute::series::DriverSeries> =
+                    serde_json::from_value(p.json.clone()).ok();
+                let ns: Option<crate::compute::series::DriverSeries> =
+                    serde_json::from_value(n.json.clone()).ok();
+                if let (Some(ps), Some(ns)) = (ps, ns) {
+                    let artifact = DriversDiff {
+                        schema: DRIVERS_DIFF_SCHEMA.to_string(),
+                        prior_ref: format!("artifact:{}", p.digest),
+                        new_ref: format!("artifact:{}", n.digest),
+                        diff: crate::compute::series::diff(&ps, &ns),
+                    };
+                    let bytes = serde_json::to_vec_pretty(&artifact).expect("serializes");
+                    write_artifact(ctx.output_dir, "drivers-diff.json", &bytes, &mut claimed)?;
+                }
+            }
+        }
+
+        let mut events = Vec::new();
+        let mut seq = 0u64;
+        let mut push = |at: u64, event: HandEvent| {
+            events.push(SequencedEvent {
+                run_id: ctx.request.run_id.clone(),
+                seq,
+                at: LogicalMs(at),
+                event,
+            });
+            seq += 1;
+        };
+        push(
+            0,
+            HandEvent::RunStarted {
+                identity: ModelIdentity {
+                    requested: "finance:ops".into(),
+                    served: "finance:ops".into(),
+                },
+                attempts: 1,
+            },
+        );
+        for (name, digest) in &claimed {
+            push(
+                1,
+                HandEvent::ArtifactDeclared {
+                    name: name.clone(),
+                    claimed_digest: digest.clone(),
+                },
+            );
+        }
+        push(2, HandEvent::RunCompleted { child_exit: None });
+        Ok(HandRunOutcome { events, claimed })
+    }
+}

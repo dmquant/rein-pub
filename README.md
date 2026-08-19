@@ -15,7 +15,8 @@ optional.
 
 ## Status
 
-**M0 contracts ✅ · M1 local deterministic proof ✅.** `crates/rein-core`
+**All five milestones landed: M0 contracts ✅ · M1 deterministic proof ✅ ·
+M2 finance layer ✅ · M3 recovery/evidence/propose ✅ · M4 TUI ✅ · M5 eval ✅.** `crates/rein-core`
 holds the contracts (entities, 10-state lifecycle, TerminalOutcome vocabulary
 with its total exit mapping, canonical hashing, receipts, the ten fake-hand
 fixtures, the incremental UTF-8 decoder). `crates/rein-runtime` makes them
@@ -46,7 +47,8 @@ M3), the same way an outside consumer would.
 ## Milestones
 
 M0 contracts ✅ · M1 local deterministic proof (SQLite ledger, CAS,
-commit/readback, strict replay) · M2 finance layer (data/compute tools, PIT
-modes, valuation contract, first real hand) · M3 recovery + evidence +
-propose-to-gate · M4 TUI (four screens) · M5 eval + integration. Each carries
-acceptance tests and a kill criterion in design §13.
+commit/readback, strict replay). All 33 invariants carry green
+reddening tests (docs/INVARIANTS.md). Verified against reality: live FMP
+pulls, a real agy/gemini valuation surviving the validator gauntlet, capsules
+landing at gate's gate through the installed binary, and evidence bundles the
+binary publishes to AGORA itself.

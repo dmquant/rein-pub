@@ -134,6 +134,9 @@ fn build_engine<'a>(
     engine
         .hands
         .register(Box::new(rein_finance::hands::FinanceDeterministic));
+    engine
+        .hands
+        .register(Box::new(rein_finance::hands::FinanceOps));
     let agy_binary = config.agy_path.clone().unwrap_or_else(|| "agy".to_string());
     let agy_model = config
         .agy_model
@@ -699,6 +702,45 @@ pub fn default_contract(task_type: &str) -> OutputContract {
                 },
             ],
             validators: base,
+        },
+        "verify" => OutputContract {
+            required_artifacts: vec![RequiredArtifact {
+                name: "verdict.json".into(),
+                media_type: "application/json".into(),
+                schema_ref: Some("schema:rein.verdicts/v1".into()),
+                min_bytes: None,
+            }],
+            validators: {
+                let mut vs = base;
+                vs.push(v("ops-discipline@1"));
+                vs
+            },
+        },
+        "settle" => OutputContract {
+            required_artifacts: vec![RequiredArtifact {
+                name: "settlement.json".into(),
+                media_type: "application/json".into(),
+                schema_ref: Some("schema:rein.settlements/v1".into()),
+                min_bytes: None,
+            }],
+            validators: {
+                let mut vs = base;
+                vs.push(v("ops-discipline@1"));
+                vs
+            },
+        },
+        "monitor" => OutputContract {
+            required_artifacts: vec![RequiredArtifact {
+                name: "drivers-diff.json".into(),
+                media_type: "application/json".into(),
+                schema_ref: Some("schema:rein.drivers-diff/v1".into()),
+                min_bytes: None,
+            }],
+            validators: {
+                let mut vs = base;
+                vs.push(v("ops-discipline@1"));
+                vs
+            },
         },
         _ => OutputContract {
             required_artifacts: vec![
@@ -1675,4 +1717,122 @@ pub fn tui(ctx: &Ctx) -> CmdResult {
     crate::tui::run_tui(&ws, &mut store)
         .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
     Ok(CmdOutput::ok(Value::Null))
+}
+
+// ---- M5: eval two-track + evidence publish ----------------------------------
+
+pub fn eval_financegym(ctx: &Ctx, file: Option<&str>, answers_file: Option<&str>) -> CmdResult {
+    let text = match file {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| CliError::new(ExitCode::NotFound, format!("{path}: {e}")))?,
+        None => rein_finance::eval::SAMPLE_QUESTIONS.to_string(),
+    };
+    let questions = rein_finance::eval::load_questions_jsonl(&text)
+        .map_err(|e| CliError::new(ExitCode::Usage, e))?;
+    let answers: std::collections::BTreeMap<String, String> = match answers_file {
+        Some(path) => {
+            let t = std::fs::read_to_string(path)
+                .map_err(|e| CliError::new(ExitCode::NotFound, format!("{path}: {e}")))?;
+            serde_json::from_str(&t).map_err(|e| CliError::new(ExitCode::Usage, e.to_string()))?
+        }
+        None => Default::default(),
+    };
+    // Zero influence on any TerminalOutcome: scoring reads artifacts/answers
+    // only and appends no receipts.
+    let before = ctx.open().ok().map(|(_, s)| s.receipt_count().unwrap_or(0));
+    let report = rein_finance::eval::score_run(&questions, &answers);
+    if let (Some(b), Ok((_, s))) = (before, ctx.open()) {
+        debug_assert_eq!(s.receipt_count().unwrap_or(0), b);
+    }
+    let out = CmdOutput::ok(j(&report));
+    Ok(if answers.is_empty() {
+        out.warn("no --answers file: scored an empty answer set (all tier 0). Run hands over the questions and pass their answers to score them.")
+    } else {
+        out
+    })
+}
+
+pub fn eval_internal(ctx: &Ctx) -> CmdResult {
+    let (ws, store) = ctx.open()?;
+    let cas = rein_runtime::cas::Cas::new(ws.objects());
+    let ranking = rein_finance::eval::rank_hands_on_settled(&cas, &store)
+        .map_err(|e| CliError::new(ExitCode::Internal, e))?;
+    let out = CmdOutput::ok(j(&ranking));
+    Ok(if ranking.is_empty() {
+        out.warn("no settled valuations yet — the internal eval ranks hands on the estate's own settled material; run settle tasks first (absence stated, not a score)")
+    } else {
+        out
+    })
+}
+
+pub fn evidence_publish(
+    ctx: &Ctx,
+    attempt: &str,
+    room: Option<&str>,
+    hub: Option<&str>,
+) -> CmdResult {
+    let aid = attempt_id(attempt)?;
+    let (ws, store) = ctx.open()?;
+    // Bundle first — the publish IS the bundle summary.
+    let out_path = ws.tmp().join(format!("{}.evidence.tar.zst", aid.as_str()));
+    let bundle = rein_runtime::evidence::bundle_attempt(&ws, &store, &aid, &out_path)
+        .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+    let bundle_bytes =
+        std::fs::read(&bundle).map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+    let digest = rein_core::canon::Sha256Digest::of_bytes(&bundle_bytes);
+
+    let log = store.load_attempt_log(&aid)?;
+    let mut outcome = "unknown".to_string();
+    let mut artifacts = Vec::new();
+    for e in log.for_attempt(&aid) {
+        match &e.body {
+            ReceiptBody::Terminal { outcome: o, .. } => outcome = format!("{o:?}"),
+            ReceiptBody::Commit {
+                artifacts: recs, ..
+            } => {
+                for r in recs {
+                    if let Some(d) = &r.readback_digest {
+                        artifacts.push((r.name.clone(), d.to_string()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let config = ctx.user_config();
+    let key_path = config
+        .agora_key_path
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default()
+                .join(".agora/rein-party-key")
+        });
+    let hub = hub.unwrap_or("https://agora-hub.example.invalid");
+    let room = room.ok_or_else(|| {
+        CliError::new(
+            ExitCode::Usage,
+            "pass --room <id> — publication is explicit, never ambient",
+        )
+    })?;
+    let client = rein_finance::agora::AgoraClient::new(hub, &key_path)
+        .map_err(|e| CliError::new(ExitCode::ProviderUnresolved, e.to_string()))?;
+    let (body, evidence) = rein_finance::agora::bundle_publish_body(
+        aid.as_str(),
+        &outcome,
+        &bundle.display().to_string(),
+        digest.as_str(),
+        &artifacts,
+    );
+    let resp = client
+        .post_message(room, "finding", &body, evidence)
+        .map_err(|e| CliError::new(ExitCode::Transport, e.to_string()))?;
+    Ok(CmdOutput::ok(kv(&[
+        ("attempt", s(aid.as_str())),
+        ("bundle_sha256", s(digest.to_string())),
+        ("room", s(room)),
+        ("hub_response", resp),
+    ])))
 }
