@@ -119,6 +119,53 @@ enum Cmd {
         #[command(subcommand)]
         cmd: CaptureCmd,
     },
+    /// Evidence bundles (§8): assemble and deterministically verify
+    Evidence {
+        #[command(subcommand)]
+        cmd: EvidenceCmd,
+    },
+    /// The recovery queue across the workspace
+    Recover,
+    /// Propose to Gate's gate through the installed `gate` binary (§9)
+    Propose {
+        #[command(subcommand)]
+        cmd: ProposeCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum EvidenceCmd {
+    /// Assemble an attempt's evidence into a .tar.zst bundle
+    Bundle {
+        attempt: String,
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Re-check every digest, sequence and receipt in a bundle
+    Verify { path: String },
+    /// Alias of bundle (export to a path)
+    Export {
+        attempt: String,
+        #[arg(long)]
+        out: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ProposeCmd {
+    /// Write a capsule from an attempt and drive `gate import capsule`
+    ToGate {
+        attempt: String,
+        /// The gate project directory (defaults to $HOME)
+        #[arg(long)]
+        gate_project: Option<String>,
+    },
+    /// Poll the gate and append an admission receipt
+    Status {
+        attempt: String,
+        #[arg(long)]
+        gate_project: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -294,6 +341,13 @@ enum AttemptCmd {
     Cancel {
         id: String,
     },
+    /// Recovery console (§8): diagnosis first, then one of exactly three
+    /// safe actions. Force-success does not exist.
+    Recover {
+        id: String,
+        #[arg(long)]
+        action: Option<String>,
+    },
     /// Operational retry under the byte-identical ContextPack (invariant 6)
     Retry {
         id: String,
@@ -455,6 +509,7 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
             AttemptCmd::Show { id } => cmds::attempt_show(ctx, id),
             AttemptCmd::Watch { id } => cmds::attempt_watch(ctx, id),
             AttemptCmd::Cancel { id } => cmds::attempt_cancel(ctx, id),
+            AttemptCmd::Recover { id, action } => cmds::attempt_recover(ctx, id, action.as_deref()),
             AttemptCmd::Retry { id, hand } => cmds::attempt_retry(ctx, id, hand.as_deref()),
             AttemptCmd::Close { id, reason } => cmds::attempt_close(ctx, id, reason),
         },
@@ -486,6 +541,23 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
         },
         Cmd::Capture { cmd } => match cmd {
             CaptureCmd::List => cmds::capture_list(ctx),
+        },
+        Cmd::Evidence { cmd } => match cmd {
+            EvidenceCmd::Bundle { attempt, out } | EvidenceCmd::Export { attempt, out } => {
+                cmds::evidence_bundle(ctx, attempt, out.as_deref())
+            }
+            EvidenceCmd::Verify { path } => cmds::evidence_verify(ctx, path),
+        },
+        Cmd::Recover => cmds::recover_queue(ctx),
+        Cmd::Propose { cmd } => match cmd {
+            ProposeCmd::ToGate {
+                attempt,
+                gate_project,
+            } => cmds::propose_to_gate(ctx, attempt, gate_project.as_deref()),
+            ProposeCmd::Status {
+                attempt,
+                gate_project,
+            } => cmds::propose_status(ctx, attempt, gate_project.as_deref()),
         },
     }
 }

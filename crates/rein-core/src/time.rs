@@ -201,6 +201,11 @@ impl Timestamp {
         }
     }
 
+    /// Unix epoch milliseconds (inverse of [`Timestamp::from_unix_millis`]).
+    pub fn unix_millis(&self) -> i64 {
+        (self.days * 86_400 + i64::from(self.secs)) * 1000 + i64::from(self.nanos / 1_000_000)
+    }
+
     /// Canonical RFC 3339 UTC rendering: `Z` suffix, fraction trimmed.
     pub fn canonical(&self) -> String {
         let (y, mo, d) = civil_from_days(self.days);

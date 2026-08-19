@@ -12,8 +12,10 @@
 pub mod cas;
 pub mod clock;
 pub mod engine;
+pub mod evidence;
 pub mod hands;
 pub mod providers;
+pub mod recovery_queue;
 pub mod replay;
 pub mod store;
 pub mod validators;

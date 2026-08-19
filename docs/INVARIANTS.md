@@ -35,7 +35,7 @@ M0-owed tests live in `crates/rein-core/tests/invariants.rs` and are named
 | 22 | Every transition appends a receipt; state resolves from ledger | **M0** ✅ → **M1** ✅ re-pointed at the SQLite WAL ledger (append-only by trigger) | `state::apply_transition`, `store::Store` | `inv22__state_transition_apply__…` + `inv22__store_persist__…` (m1_acceptance) |
 | 23 | Idempotency scoped to request (C4); retry mints generation | **M0** ✅ | `idempotency::IdempotencyKey` | `inv23__idempotency_key__…` |
 | 24 | Fence generations from day one; stale generations cannot commit | **M0** ✅ | `fence::guard_commit`, `fence::issue_next_generation` | `inv24__fence_generation__…` |
-| 25 | Async-boundary checks tolerate the boundary's latency | M3 (first async check) | — | owed M3 |
+| 25 | Async-boundary checks tolerate the boundary's latency | **M3** ✅ | `recovery_queue::recovery_queue` (stale threshold ≫ boundary latency) | `inv25__recovery_queue__…` (m3_acceptance) |
 | 26 | Absolute paths; `env -i` scheduled-path test | **M2** ✅ | `hands::AgyHand::resolve` (absolute or refuse) | `inv11_26__agy_hand__…` (spawned under a scrubbed PATH-only env) |
 | 27 | configRoot ≠ workspaceRoot | **M1** ✅ | `workspace::SecretBroker::open` | `inv27__workspace_secretbroker_open__…` (m1_acceptance) |
 | 28 | Secrets are references; quarantine = verdict + receipt (C6) | **M0** ✅ (schema-side; brokered injection M2) | `secretref::Redactor`, `receipts::ReceiptBody::Quarantine` | `inv28__secretref__…` |
@@ -43,7 +43,7 @@ M0-owed tests live in `crates/rein-core/tests/invariants.rs` and are named
 | 30 | Incremental UTF-8 decode retaining partial sequences | **M0** ✅ | `capture::Utf8StreamDecoder` | `inv30__capture_utf8streamdecoder__…` |
 | 31 | Absence is stated, never blank | M4 (schema seed at M0: `axes::Axis::NotYetRecorded`, `axes::ExternalAxis`) | — | owed M4 |
 | 32 | Disabled actions explain; statuses name their receipt | M4 | — | owed M4 |
-| 33 | Findings a gate no longer holds are still reported | M3/M4 | — | owed M3 |
+| 33 | Findings a gate no longer holds are still reported | **M3** ✅ (pane face owed M4) | `rein_propose::build_capsule_objects` (findings ride every payload) + `propose status` findings_reported | `inv9_33__capsule_objects__…` (rein-propose) |
 
 Accepted resolutions the code embodies (recorded in the room before
 implementation):

@@ -312,8 +312,31 @@ impl<'a> Engine<'a> {
         }
         self.advance(&mut log, &mut ids, &aid, AttemptState::Preparing, at)?;
 
+        self.pipeline_from_preparing(
+            &mut log,
+            &mut persisted,
+            &mut ids,
+            &aid,
+            &pack,
+            attempt.generation,
+        )
+    }
+
+    /// The pipeline from `preparing` onward — shared by fresh runs and by
+    /// recovery's resume-commit, which re-enters here under a fresh fence
+    /// generation as a new HarnessRun on the *same* attempt (§3).
+    fn pipeline_from_preparing(
+        &mut self,
+        log: &mut ReceiptLog,
+        persisted: &mut usize,
+        ids: &mut IdGen,
+        aid: &AttemptId,
+        pack: &ContextPack,
+        generation: u64,
+    ) -> Result<ExecutionReport, EngineError> {
+        let at = self.clock.now();
         let attempt_tmp = self.workspace.tmp().join(aid.as_str());
-        let run_no = self.store.runs_for_attempt(&aid)?.len() + 1;
+        let run_no = self.store.runs_for_attempt(aid)?.len() + 1;
         let sandbox = attempt_tmp.join(format!("run-{run_no}"));
         let inputs_dir = sandbox.join("inputs");
         let output_dir = sandbox.join("output");
@@ -368,26 +391,26 @@ impl<'a> Engine<'a> {
             env_notes.push("in-process hand: OS sandbox not applicable".to_string());
         }
         log.append(
-            &mut ids,
-            &aid,
+            ids,
+            aid,
             at,
             ReceiptBody::Environment {
                 binary_paths: vec![],
                 notes: env_notes,
             },
         );
-        self.sync(&log, &mut persisted, &ids)?;
+        self.sync(log, persisted, ids)?;
 
-        if self.check_cancel_pre_run(&mut log, &mut ids, &aid, at)? {
-            return self.finish_aborted(&mut log, &mut persisted, &mut ids, &aid, &pack);
+        if self.check_cancel_pre_run(log, ids, aid, at)? {
+            return self.finish_aborted(log, persisted, ids, aid, pack);
         }
 
         // --- run ------------------------------------------------------------
-        self.advance(&mut log, &mut ids, &aid, AttemptState::Running, at)?;
-        let fence_generation = fence::current_generation(&log, &aid)?;
+        self.advance(log, ids, aid, AttemptState::Running, at)?;
+        let fence_generation = fence::current_generation(log, aid)?;
         let run_id = ids.run();
         self.store
-            .insert_run(&run_id, &aid, fence_generation, &pack.hand.selector, at)?;
+            .insert_run(&run_id, aid, fence_generation, &pack.hand.selector, at)?;
 
         let request = HandRequest {
             attempt_id: aid.clone(),
@@ -395,9 +418,9 @@ impl<'a> Engine<'a> {
             fence_generation,
             sequence: 0,
             idempotency_key: IdempotencyKey::derive(
-                task_ref,
+                &pack.task_ref,
                 pack.context_hash.as_ref().expect("sealed"),
-                attempt.generation,
+                generation,
             ),
             capability_ref: GrantId::parse("grant_workspace").expect("static"),
             trace: ids.trace(),
@@ -456,8 +479,8 @@ impl<'a> Engine<'a> {
         stdout.push_str(&decoder.finish());
         let (scrubbed, _report) = self.broker.redactor().scrub(&stdout);
         log.append(
-            &mut ids,
-            &aid,
+            ids,
+            aid,
             at,
             ReceiptBody::Capture {
                 run_id: run_id.clone(),
@@ -475,8 +498,8 @@ impl<'a> Engine<'a> {
         // Per-step budget attribution (invariant 10).
         if let Some(breach) = per_step_breach(&events, &pack.budget) {
             log.append(
-                &mut ids,
-                &aid,
+                ids,
+                aid,
                 at,
                 ReceiptBody::Budget {
                     scope: BudgetScope::Step { step: breach.step },
@@ -488,15 +511,15 @@ impl<'a> Engine<'a> {
                 },
             );
         }
-        self.sync(&log, &mut persisted, &ids)?;
+        self.sync(log, persisted, ids)?;
 
         // Cancellation observed during the run: recorded as an abort-cause
         // receipt; the pipeline still completes (O2: from running onward the
         // drawn edges are walked, and evidence is captured).
-        if self.cancel_flag(&aid).exists() {
+        if self.cancel_flag(aid).exists() {
             log.append(
-                &mut ids,
-                &aid,
+                ids,
+                aid,
                 at,
                 ReceiptBody::AbortCause {
                     abort: AbortKind::Cancelled {
@@ -516,15 +539,15 @@ impl<'a> Engine<'a> {
             } else {
                 AnomalyKind::UnknownAfterDisconnect
             };
-            rein_core::recovery::enter_recovery(&mut log, &mut ids, &aid, anomaly, at)?;
-            self.sync(&log, &mut persisted, &ids)?;
-            let report = self.report_for(&log, &aid)?;
+            rein_core::recovery::enter_recovery(log, ids, aid, anomaly, at)?;
+            self.sync(log, persisted, ids)?;
+            let report = self.report_for(log, aid)?;
             return Ok(report);
         }
 
         // --- artifact commit ------------------------------------------------
-        self.advance(&mut log, &mut ids, &aid, AttemptState::CommitPending, at)?;
-        fence::guard_commit(&log, &aid, fence_generation)?;
+        self.advance(log, ids, aid, AttemptState::CommitPending, at)?;
+        fence::guard_commit(log, aid, fence_generation)?;
 
         let mut records = Vec::new();
         let mut readback: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -555,18 +578,18 @@ impl<'a> Engine<'a> {
             records.push(record);
         }
         log.append(
-            &mut ids,
-            &aid,
+            ids,
+            aid,
             at,
             ReceiptBody::Commit {
                 fence_generation,
                 artifacts: records.clone(),
             },
         );
-        self.sync(&log, &mut persisted, &ids)?;
+        self.sync(log, persisted, ids)?;
 
         // --- validation (over read-back bytes only) -------------------------
-        self.advance(&mut log, &mut ids, &aid, AttemptState::Validating, at)?;
+        self.advance(log, ids, aid, AttemptState::Validating, at)?;
         for (artifact, record) in pack.output_contract.required_artifacts.iter().zip(&records) {
             if record.verdict != rein_core::receipts::CommitVerdict::Verified {
                 continue;
@@ -579,7 +602,7 @@ impl<'a> Engine<'a> {
                         artifact,
                         bytes,
                         all_artifacts: &readback,
-                        pack: &pack,
+                        pack,
                     },
                 );
                 let quarantined = matches!(
@@ -587,8 +610,8 @@ impl<'a> Engine<'a> {
                     rein_core::receipts::ValidatorVerdict::Quarantined { .. }
                 );
                 log.append(
-                    &mut ids,
-                    &aid,
+                    ids,
+                    aid,
                     at,
                     ReceiptBody::Validation {
                         artifact_name: artifact.name.clone(),
@@ -599,8 +622,8 @@ impl<'a> Engine<'a> {
                 );
                 if quarantined {
                     log.append(
-                        &mut ids,
-                        &aid,
+                        ids,
+                        aid,
                         at,
                         ReceiptBody::Quarantine {
                             artifact_name: artifact.name.clone(),
@@ -611,14 +634,14 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        self.sync(&log, &mut persisted, &ids)?;
+        self.sync(log, persisted, ids)?;
 
         // --- classification + closure --------------------------------------
-        self.advance(&mut log, &mut ids, &aid, AttemptState::Classifying, at)?;
-        let c = classify(&log, &aid, &pack.output_contract)?;
+        self.advance(log, ids, aid, AttemptState::Classifying, at)?;
+        let c = classify(log, aid, &pack.output_contract)?;
         let terminal_receipt = log.append(
-            &mut ids,
-            &aid,
+            ids,
+            aid,
             at,
             ReceiptBody::Terminal {
                 outcome: c.outcome,
@@ -627,29 +650,29 @@ impl<'a> Engine<'a> {
             },
         );
         apply_transition(
-            &mut log,
-            &mut ids,
-            &aid,
+            log,
+            ids,
+            aid,
             AttemptState::Terminal,
             TransitionCauseRecord::ClassificationComplete { terminal_receipt },
             at,
         )?;
         apply_transition(
-            &mut log,
-            &mut ids,
-            &aid,
+            log,
+            ids,
+            aid,
             AttemptState::Closed,
             TransitionCauseRecord::Close,
             at,
         )?;
-        self.sync(&log, &mut persisted, &ids)?;
+        self.sync(log, persisted, ids)?;
 
         // --- selection (invariant 4): adjudicate the task -------------------
-        let candidates = self.store.attempts_for_task(task_ref)?;
-        selection::select_and_record(&mut log, &mut ids, task_ref, &candidates, at);
-        self.sync(&log, &mut persisted, &ids)?;
+        let candidates = self.store.attempts_for_task(&pack.task_ref)?;
+        selection::select_and_record(log, ids, &pack.task_ref, &candidates, at);
+        self.sync(log, persisted, ids)?;
 
-        let mut report = self.report_for(&log, &aid)?;
+        let mut report = self.report_for(log, aid)?;
         report.run_id = Some(run_id);
         report.duplicate_events = duplicate_events;
         report.event_gaps = event_gaps;
@@ -806,6 +829,37 @@ impl<'a> Engine<'a> {
         )?;
         self.sync(&log, &mut persisted, &ids)?;
         self.report_for(&log, attempt_id)
+    }
+
+    /// Recovery action 1 (§8): resume under a new fence generation — a new
+    /// HarnessRun on the same attempt; old generations may not commit
+    /// (invariant 24). Only legal from `recovery_pending`.
+    pub fn resume_attempt(
+        &mut self,
+        attempt_id: &AttemptId,
+        hand_override: Option<&str>,
+    ) -> Result<ExecutionReport, EngineError> {
+        let row = self.store.get_attempt(attempt_id)?;
+        let mut pack = self.store.get_pack(&row.context_pack_id)?;
+        if let Some(hand) = hand_override {
+            // Execution binding, not semantic content (C2): a dead hand can
+            // be replaced without touching the frozen pack's hash.
+            pack.hand.selector = hand.to_string();
+        }
+        let mut log = self.store.load_full_log()?;
+        let mut persisted = log.len();
+        let mut ids = self.store.id_gen()?;
+        let at = self.clock.now();
+        rein_core::recovery::resume_commit_new_generation(&mut log, &mut ids, attempt_id, at)?;
+        self.sync(&log, &mut persisted, &ids)?;
+        self.pipeline_from_preparing(
+            &mut log,
+            &mut persisted,
+            &mut ids,
+            attempt_id,
+            &pack,
+            row.generation,
+        )
     }
 
     /// Retry under the byte-identical pack (recovery action 2), optionally
