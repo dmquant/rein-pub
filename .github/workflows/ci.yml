@@ -1,0 +1,30 @@
+# The dependency fence and the invariant manifest, as literal CI: every push
+# re-proves the standalone build — no gate-* crates in the graph, no clock in
+# the judgment path, all 93 tests. `--locked` holds the committed resolution
+# (the toolchain floor is 1.82; several transitive deps pin below their
+# edition2024 releases on purpose).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.82.0"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: tests
+        # The gate-binary crossing test skips with a stated reason here (no
+        # `gate` on the runner) — by design; it runs wherever gate exists.
+        run: cargo test --locked
