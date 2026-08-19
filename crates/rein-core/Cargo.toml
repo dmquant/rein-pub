@@ -1,0 +1,19 @@
+[package]
+name = "rein-core"
+description = "Rein M0 — execution contracts for the financial research harness (design v0.2)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: canonical bytes must reparse to bit-identical floats
+# (invariant 7); the default fast path loses ULPs at extreme magnitudes.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+sha2 = "0.10"
+thiserror = "1"
+
+[dev-dependencies]
+# Pinned + trimmed: newer proptest (and its fork/tempfile chain) resolves
+# getrandom 0.4 (edition2024), beyond this estate's cargo 1.82.
+proptest = { version = "=1.4.0", default-features = false, features = ["std"] }
