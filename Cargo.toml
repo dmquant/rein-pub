@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rein-core"]
+members = ["crates/rein-core", "crates/rein-runtime", "crates/rein"]
 
 [workspace.package]
 version = "0.0.1"

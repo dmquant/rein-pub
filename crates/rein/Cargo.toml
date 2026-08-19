@@ -1,0 +1,22 @@
+[package]
+name = "rein"
+description = "Rein — a financial research harness (CLI). Binary surface per design §9."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rein"
+path = "src/main.rs"
+
+[dependencies]
+rein-core = { path = "../rein-core" }
+rein-runtime = { path = "../rein-runtime" }
+clap = { version = "=4.4.18", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_yaml = "0.9"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "=3.10.1"

@@ -1,0 +1,18 @@
+[package]
+name = "rein-runtime"
+description = "Rein M1+ — durable ledger (SQLite WAL), content-addressed store, and the §7 execution pipeline over the M0 contracts"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rein-core = { path = "../rein-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_yaml = "0.9"
+thiserror = "1"
+# Version proven in the sibling-estate estate on cargo 1.82.
+rusqlite = { version = "=0.31.0", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "=3.10.1"

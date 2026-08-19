@@ -115,6 +115,17 @@ impl IdGen {
         Self::default()
     }
 
+    /// Resume minting after `counter` ids have been issued (durable stores
+    /// persist the high-water mark so ids never collide across sessions).
+    pub fn starting_at(counter: u64) -> Self {
+        Self { counter }
+    }
+
+    /// The number of ids issued so far — the durable high-water mark.
+    pub fn issued(&self) -> u64 {
+        self.counter
+    }
+
     fn bump(&mut self) -> u64 {
         self.counter += 1;
         self.counter

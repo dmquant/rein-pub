@@ -23,9 +23,16 @@ use std::collections::BTreeMap;
 
 pub const SCHEMA: &str = "rein.context-pack/v1";
 
-/// Top-level fields excluded from the semantic hash (decision C2): identity
-/// and bookkeeping, never meaning.
-pub const SEMANTIC_EXCLUDED: &[&str] = &["context_pack_id", "context_hash", "created_at"];
+/// Top-level fields excluded from the semantic hash (decision C2, amended at
+/// M1): identity and bookkeeping — and the **hand binding**. M1's acceptance
+/// ("same ContextPack through fake-a and fake-b yields identical digests")
+/// defines the semantic content as invariant under executor choice: the hand
+/// is *who*, the pack is *what*. Attribution is not weakened — the run record
+/// carries the hand selector, requested/served model ids and the hand pin
+/// (invariant 8) in receipts, where the diff is the alarm. This also makes
+/// recovery's "retry same ContextPack" real when a hand is dead: rebinding
+/// the executor is not a semantic change (invariant 6).
+pub const SEMANTIC_EXCLUDED: &[&str] = &["context_pack_id", "context_hash", "created_at", "hand"];
 
 /// The exact top-level key set of the serialized pack. The whitelist test pins
 /// this so an ambient field cannot be added without reddening (invariant 7).

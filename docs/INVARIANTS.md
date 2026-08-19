@@ -32,12 +32,12 @@ M0-owed tests live in `crates/rein-core/tests/invariants.rs` and are named
 | 19 | Publisher spread; syndication ≠ corroboration | M2 | — | owed M2 |
 | 20 | Coverage denominators over enumerable sets; drops counted | M2 | — | owed M2 |
 | 21 | Direct/inherited never summed; falsifier discipline | M2 | — | owed M2 |
-| 22 | Every transition appends a receipt; state resolves from ledger | **M0** ✅ (C3: receipt-log form; re-pointed at SQLite in M1) | `state::apply_transition`, `state::resolve_state` | `inv22__state_transition_apply__…` + `prop_state.rs` |
+| 22 | Every transition appends a receipt; state resolves from ledger | **M0** ✅ → **M1** ✅ re-pointed at the SQLite WAL ledger (append-only by trigger) | `state::apply_transition`, `store::Store` | `inv22__state_transition_apply__…` + `inv22__store_persist__…` (m1_acceptance) |
 | 23 | Idempotency scoped to request (C4); retry mints generation | **M0** ✅ | `idempotency::IdempotencyKey` | `inv23__idempotency_key__…` |
 | 24 | Fence generations from day one; stale generations cannot commit | **M0** ✅ | `fence::guard_commit`, `fence::issue_next_generation` | `inv24__fence_generation__…` |
 | 25 | Async-boundary checks tolerate the boundary's latency | M3 (first async check) | — | owed M3 |
 | 26 | Absolute paths; `env -i` scheduled-path test | M2 (schema at M0: `receipts::ReceiptBody::Environment`) | — | owed M2 |
-| 27 | configRoot ≠ workspaceRoot | M1 (schema at M0: `entities::Workspace`) | — | owed M1 |
+| 27 | configRoot ≠ workspaceRoot | **M1** ✅ | `workspace::SecretBroker::open` | `inv27__workspace_secretbroker_open__…` (m1_acceptance) |
 | 28 | Secrets are references; quarantine = verdict + receipt (C6) | **M0** ✅ (schema-side; brokered injection M2) | `secretref::Redactor`, `receipts::ReceiptBody::Quarantine` | `inv28__secretref__…` |
 | 29 | Grants explicit, expiring, non-transitive; TOFU | M2 (schema at M0: `entities::CapabilityGrant` — `expires_at` mandatory, no delegation field) | — | owed M2 |
 | 30 | Incremental UTF-8 decode retaining partial sequences | **M0** ✅ | `capture::Utf8StreamDecoder` | `inv30__capture_utf8streamdecoder__…` |
@@ -58,5 +58,11 @@ implementation):
   `tests/prop_state.rs`.
 - **C2 refinement** (reported with the M0 finding): `idempotency_key` is
   request-side, not a pack field — invariant 23 derives it from the context
-  hash, so hashing it would be circular. Exclusion set stays
-  `{context_pack_id, context_hash, created_at}`.
+  hash, so hashing it would be circular.
+- **C2 amendment (M1, refroze the pack vector):** the hand binding is
+  execution binding, excluded from the semantic hash — M1's own acceptance
+  ("same ContextPack through fake-a and fake-b") is unsatisfiable otherwise,
+  and recovery's "retry same ContextPack" dies with a dead hand. Attribution
+  is unchanged: selector, requested/served ids and the hand pin are in
+  receipts. Exclusion set: `{context_pack_id, context_hash, created_at,
+  hand}`.

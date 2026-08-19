@@ -189,6 +189,18 @@ impl Timestamp {
         })
     }
 
+    /// From Unix epoch milliseconds (the runtime's SystemClock boundary —
+    /// core itself still never reads a clock).
+    pub fn from_unix_millis(ms: i64) -> Self {
+        let total_secs = ms.div_euclid(1000);
+        let millis = ms.rem_euclid(1000) as u32;
+        Self {
+            days: total_secs.div_euclid(86_400),
+            secs: total_secs.rem_euclid(86_400) as u32,
+            nanos: millis * 1_000_000,
+        }
+    }
+
     /// Canonical RFC 3339 UTC rendering: `Z` suffix, fraction trimmed.
     pub fn canonical(&self) -> String {
         let (y, mo, d) = civil_from_days(self.days);

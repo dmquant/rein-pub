@@ -149,11 +149,15 @@ fn vector_canonicalization_is_idempotent_on_the_sample_pack() {
 /// The frozen end-to-end vector: the §5-shaped sample pack's semantic hash.
 /// This constant pins the whole chain — schema shape, typed normalizations,
 /// canonical bytes, digest — and any change anywhere reddens it.
+///
+/// History: refrozen once, at M1, when the C2 amendment moved the hand
+/// binding out of the semantic view (prior value `sha256:adaeed28…ecd0`,
+/// M0). Refreezing this constant is a recorded design decision, never a fix.
 #[test]
 fn vector_sample_pack_semantic_hash_is_frozen() {
     let pack = sealed_sample_pack();
     assert_eq!(
         pack.context_hash.clone().unwrap().to_string(),
-        "sha256:adaeed28757788bd117285c7404e610f32c7df2ffb17e89b5c737406ce5aecd0"
+        "sha256:b313589e848003e1398a031f01cdae6bdd0170442da42d6d55dba2b829ac204d"
     );
 }

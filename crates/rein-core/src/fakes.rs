@@ -43,7 +43,16 @@ pub trait FakeHand {
 pub fn deterministic_artifact_bytes(req: &HandRequest, artifact_name: &str) -> Vec<u8> {
     let key = req.idempotency_key.as_str();
     let semantic = key.rsplit_once("/gen:").map_or(key, |(head, _)| head);
-    format!("REIN-M0-DETERMINISTIC\nkey={semantic}\nartifact={artifact_name}\n").into_bytes()
+    // Media-type honest: a `.json` artifact stages valid JSON, so the
+    // well-formedness validator judges content, not the fixture's laziness.
+    if artifact_name.ends_with(".json") {
+        format!(
+            "{{\"schema\":\"rein.fixture/v1\",\"key\":\"{semantic}\",\"artifact\":\"{artifact_name}\"}}\n"
+        )
+        .into_bytes()
+    } else {
+        format!("REIN-M0-DETERMINISTIC\nkey={semantic}\nartifact={artifact_name}\n").into_bytes()
+    }
 }
 
 fn identity(name: &str) -> ModelIdentity {

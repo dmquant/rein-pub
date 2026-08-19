@@ -563,10 +563,18 @@ fn inv07__canon_canonicalize__vectors_key_order_dup_rejection_exclusion_set() {
     semantic.source_cutoff = t("2020-01-01T00:00:00Z");
     assert_ne!(semantic.semantic_hash().unwrap(), base);
 
+    // C2 amendment (M1): the hand binding is execution binding, not semantic
+    // content — rebinding the executor must not change the pack hash, or
+    // M1's acceptance (same pack through fake-a and fake-b) is unsatisfiable
+    // and recovery's "retry same ContextPack" dies with the hand.
+    let mut rebound = sealed.clone();
+    rebound.hand.selector = "fake:deterministic-b".into();
+    assert_eq!(rebound.semantic_hash().unwrap(), base);
+
     assert_eq!(
         SEMANTIC_EXCLUDED,
-        &["context_pack_id", "context_hash", "created_at"],
-        "the exclusion set is a recorded decision (C2); changing it is a design change"
+        &["context_pack_id", "context_hash", "created_at", "hand"],
+        "the exclusion set is a recorded decision (C2, amended at M1); changing it is a design change"
     );
 
     // No ambient environment fields: the serialized key set is the whitelist.

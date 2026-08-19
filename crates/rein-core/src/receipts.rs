@@ -233,6 +233,13 @@ impl ReceiptLog {
         Self::default()
     }
 
+    /// Rehydrate a log from durable storage (M1's SQLite ledger). The rows
+    /// were appended through [`ReceiptLog::append`] originally; this is
+    /// replay, not editing — order must be the original append order.
+    pub fn from_envelopes(entries: Vec<ReceiptEnvelope>) -> Self {
+        Self { entries }
+    }
+
     pub fn append(
         &mut self,
         ids: &mut IdGen,
