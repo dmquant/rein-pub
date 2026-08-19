@@ -100,9 +100,59 @@ impl Ctx {
         let (ws, mut store) = self.open()?;
         let broker = self.broker(&ws)?;
         let clock = SystemClock;
-        let mut engine = Engine::new(&ws, &mut store, &clock, broker);
+        let mut engine = build_engine(self, &ws, &mut store, &clock, broker)?;
         f(&mut engine)
     }
+
+    fn user_config(&self) -> rein_runtime::workspace::UserConfig {
+        rein_runtime::workspace::load_user_config(&self.config_root)
+    }
+}
+
+/// Engine with the finance layer registered: the deterministic valuation
+/// hand, the agy subprocess hand when resolvable, and the finance validator
+/// set bound to the workspace's capture index and the latest sealed epoch.
+fn build_engine<'a>(
+    ctx: &Ctx,
+    ws: &'a Workspace,
+    store: &'a mut Store,
+    clock: &'a dyn Clock,
+    broker: SecretBroker,
+) -> Result<Engine<'a>, CliError> {
+    let captures: std::collections::BTreeMap<String, rein_runtime::store::CaptureRow> = store
+        .list_captures()?
+        .into_iter()
+        .map(|c| (c.digest.as_str().to_string(), c))
+        .collect();
+    let cutoff = store
+        .list_epochs()?
+        .last()
+        .map(|(e, _)| e.source_cutoff)
+        .unwrap_or_else(|| clock.now());
+    let config = ctx.user_config();
+    let mut engine = Engine::new(ws, store, clock, broker);
+    engine
+        .hands
+        .register(Box::new(rein_finance::hands::FinanceDeterministic));
+    let agy_binary = config.agy_path.clone().unwrap_or_else(|| "agy".to_string());
+    let agy_model = config
+        .agy_model
+        .clone()
+        .unwrap_or_else(|| "gemini-3.6-flash".to_string());
+    if let Ok(agy) =
+        rein_finance::hands::AgyHand::resolve(&agy_binary, &agy_model, ws.cache().join("agy-ws"))
+    {
+        engine.hands.register(Box::new(agy));
+    }
+    rein_finance::validators::register_finance_validators(
+        &mut engine.validators,
+        rein_finance::validators::FinanceContext {
+            captures,
+            cas: rein_runtime::cas::Cas::new(ws.objects()),
+            source_cutoff: cutoff,
+        },
+    );
+    Ok(engine)
 }
 
 // ---- ref normalization -----------------------------------------------------
@@ -151,10 +201,13 @@ pub fn init(ctx: &Ctx, workspace_ref: &str) -> CmdResult {
     ProvidersLock::new()
         .save(&ws.providers_lock())
         .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+    let skills = rein_finance::skills::install(&ws.skills())
+        .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
     Ok(CmdOutput::ok(kv(&[
         ("workspace", s(ws.root.display().to_string())),
         ("rein_dir", s(ws.rein_dir.display().to_string())),
         ("workspace_ref", s(ws.manifest.workspace_ref.as_str())),
+        ("skills_installed", json!(skills)),
     ]))
     .next("rein mission create <name> --objective \"…\""))
 }
@@ -590,13 +643,19 @@ fn parse_plan_file(path: &str) -> Result<(Plan, Vec<(TaskRef, String)>), CliErro
 }
 
 pub fn default_contract(task_type: &str) -> OutputContract {
-    let validators = vec![
-        ValidatorRef::parse("artifact-wellformed@1").expect("static"),
-        ValidatorRef::parse("secret-scan@1").expect("static"),
-    ];
+    let v = |name: &str| ValidatorRef::parse(name).expect("static");
+    let base = vec![v("artifact-wellformed@1"), v("secret-scan@1")];
     match task_type {
+        // The split valuation contract (§4 ▲): research-facing assumptions,
+        // numeric-facing valuation, plus the memo.
         "valuation" => OutputContract {
             required_artifacts: vec![
+                RequiredArtifact {
+                    name: "assumptions.json".into(),
+                    media_type: "application/json".into(),
+                    schema_ref: Some("schema:rein.assumptions/v1".into()),
+                    min_bytes: None,
+                },
                 RequiredArtifact {
                     name: "valuation.json".into(),
                     media_type: "application/json".into(),
@@ -610,7 +669,36 @@ pub fn default_contract(task_type: &str) -> OutputContract {
                     min_bytes: Some(8),
                 },
             ],
-            validators,
+            validators: {
+                let mut vs = base;
+                vs.extend([
+                    v("input-closure@1"),
+                    v("numeric-consistency@1"),
+                    v("bridge-completeness@1"),
+                    v("falsifier-present@1"),
+                    v("source-cutoff@1"),
+                    v("coverage-denominator@1"),
+                ]);
+                vs
+            },
+        },
+        // Harness-mechanics contract for the conformance fixtures (M1 shape).
+        "fixture" => OutputContract {
+            required_artifacts: vec![
+                RequiredArtifact {
+                    name: "valuation.json".into(),
+                    media_type: "application/json".into(),
+                    schema_ref: None,
+                    min_bytes: None,
+                },
+                RequiredArtifact {
+                    name: "memo.md".into(),
+                    media_type: "text/markdown".into(),
+                    schema_ref: None,
+                    min_bytes: Some(8),
+                },
+            ],
+            validators: base,
         },
         _ => OutputContract {
             required_artifacts: vec![
@@ -627,7 +715,16 @@ pub fn default_contract(task_type: &str) -> OutputContract {
                     min_bytes: None,
                 },
             ],
-            validators,
+            validators: {
+                let mut vs = base;
+                vs.extend([
+                    v("citation-closure@1"),
+                    v("fact-vs-forecast@1"),
+                    v("source-cutoff@1"),
+                    v("coverage-denominator@1"),
+                ]);
+                vs
+            },
         },
     }
 }
@@ -645,6 +742,8 @@ pub fn plan_apply(ctx: &Ctx, file: &str) -> CmdResult {
             task_type: task_type.clone(),
             output_contract: default_contract(task_type),
             satisfaction_criteria: vec!["first-valid-deterministic@1".to_string()],
+            inputs: vec![],
+            universe: vec![],
         };
         store.put_task(&task)?;
     }
@@ -678,6 +777,8 @@ pub fn task_add(
     plan: &str,
     task_type: &str,
     contract_file: Option<&str>,
+    inputs: &[String],
+    universe: &[String],
 ) -> CmdResult {
     let (_, mut store) = ctx.open()?;
     let contract = match contract_file {
@@ -689,12 +790,27 @@ pub fn task_add(
         }
         None => default_contract(task_type),
     };
+    let mut input_refs = Vec::new();
+    for i in inputs {
+        let raw = i.strip_prefix("capture:").unwrap_or(i);
+        let normalized = if raw.starts_with("artifact:") {
+            raw.to_string()
+        } else {
+            format!("artifact:{raw}")
+        };
+        input_refs.push(
+            rein_core::ids::ArtifactRef::parse(&normalized)
+                .map_err(|e| CliError::new(ExitCode::Usage, e.to_string()))?,
+        );
+    }
     let task = TaskVersion {
         task_ref: task_ref(name)?,
         plan_ref: plan_ref(plan)?,
         task_type: task_type.to_string(),
         output_contract: contract,
         satisfaction_criteria: vec!["first-valid-deterministic@1".to_string()],
+        inputs: input_refs,
+        universe: universe.to_vec(),
     };
     store.put_task(&task)?;
     Ok(CmdOutput::ok(j(&task)))
@@ -918,7 +1034,7 @@ pub fn attempt_start(
     let broker = ctx.broker(&ws)?;
     let clock = SystemClock;
     let report = {
-        let mut engine = Engine::new(&ws, &mut store, &clock, broker);
+        let mut engine = build_engine(ctx, &ws, &mut store, &clock, broker)?;
         engine.run_task(&t, hand, None)?
     };
     let mut out = CmdOutput::ok(report_json(&report));
@@ -1053,7 +1169,7 @@ pub fn plan_run(ctx: &Ctx, name: &str, hand: Option<&str>) -> CmdResult {
     let broker = ctx.broker(&ws)?;
     let clock = SystemClock;
     let mut results = Vec::new();
-    let mut engine = Engine::new(&ws, &mut store, &clock, broker);
+    let mut engine = build_engine(ctx, &ws, &mut store, &clock, broker)?;
     // Ready-order execution: keep sweeping until nothing new becomes ready.
     let mut progressed = true;
     while progressed {
@@ -1209,4 +1325,136 @@ pub fn replay_attempt(ctx: &Ctx, id: &str, strict: bool) -> CmdResult {
     } else {
         out
     })
+}
+
+// ---- data tools (M2): pulls captured to CAS or refused ----------------------
+
+pub fn data_pull_equity(ctx: &Ctx, symbol: &str, kinds: &str) -> CmdResult {
+    let (ws, mut store) = ctx.open()?;
+    let broker = ctx.broker(&ws)?;
+    let config = ctx.user_config();
+    let (epoch, sealed) = store
+        .list_epochs()?
+        .pop()
+        .ok_or_else(|| CliError::new(ExitCode::Usage, "no epoch — open and seal one first"))?;
+    if !sealed {
+        return Err(CliError::new(ExitCode::Usage, "epoch is not sealed"));
+    }
+    let client = rein_finance::fmp::FmpClient::discover(
+        &broker,
+        config.fmp_env_file.as_deref().map(std::path::Path::new),
+    )
+    .map_err(|e| CliError::new(ExitCode::ProviderUnresolved, e.to_string()))?;
+    let cas = rein_runtime::cas::Cas::new(ws.objects());
+    let mut cs = rein_finance::capture::CaptureStore::new(&mut store, cas);
+    let now = SystemClock.now();
+
+    use rein_finance::fmp::EquityEndpoint as E;
+    let wanted: Vec<E> = if kinds == "all" {
+        E::all().to_vec()
+    } else {
+        kinds
+            .split(',')
+            .filter_map(|k| match k.trim() {
+                "quote" => Some(E::Quote),
+                "profile" => Some(E::Profile),
+                "income" => Some(E::IncomeStatement),
+                "balance" => Some(E::BalanceSheet),
+                "cashflow" => Some(E::CashFlow),
+                "estimates" => Some(E::AnalystEstimates),
+                "prices" => Some(E::PricesEod),
+                _ => None,
+            })
+            .collect()
+    };
+    if wanted.is_empty() {
+        return Err(CliError::new(
+            ExitCode::Usage,
+            "kinds: comma list of quote,profile,income,balance,cashflow,estimates,prices or `all`",
+        ));
+    }
+    let mut results = Vec::new();
+    let mut warnings = Vec::new();
+    for e in wanted {
+        match cs.pull_equity(&client, e, symbol, &epoch, now) {
+            Ok(r) => results.push(kv(&[
+                ("tool", s(e.tool_name())),
+                ("digest", s(r.digest.to_string())),
+                ("stamped_rows", json!(r.rows.len())),
+                (
+                    "served_version",
+                    r.served_version.map(s).unwrap_or(Value::Null),
+                ),
+            ])),
+            Err(err) => warnings.push(format!("{}: {err}", e.tool_name())),
+        }
+    }
+    let mut out = CmdOutput::ok(Value::Array(results));
+    for w in warnings {
+        out = out.warn(w);
+    }
+    Ok(out)
+}
+
+pub fn data_search(ctx: &Ctx, query: &str) -> CmdResult {
+    let config = ctx.user_config();
+    let base = config
+        .searxng_url
+        .unwrap_or_else(|| "http://localhost:8080".to_string());
+    let client = rein_finance::capture::SearxClient::new(&base)
+        .map_err(|e| CliError::new(ExitCode::Transport, e.to_string()))?;
+    let hits = client
+        .search(query, 10)
+        .map_err(|e| CliError::new(ExitCode::Transport, e.to_string()))?;
+    let rows: Vec<Value> = hits
+        .iter()
+        .map(|h| kv(&[("title", s(h.title.clone())), ("url", s(h.url.clone()))]))
+        .collect();
+    Ok(CmdOutput::ok(Value::Array(rows)))
+}
+
+pub fn data_fetch(ctx: &Ctx, url: &str) -> CmdResult {
+    let (ws, mut store) = ctx.open()?;
+    let (epoch, sealed) = store
+        .list_epochs()?
+        .pop()
+        .ok_or_else(|| CliError::new(ExitCode::Usage, "no epoch — open and seal one first"))?;
+    if !sealed {
+        return Err(CliError::new(ExitCode::Usage, "epoch is not sealed"));
+    }
+    let (bytes, media) = rein_finance::capture::fetch_url(url)
+        .map_err(|e| CliError::new(ExitCode::Transport, e.to_string()))?;
+    let cas = rein_runtime::cas::Cas::new(ws.objects());
+    let mut cs = rein_finance::capture::CaptureStore::new(&mut store, cas);
+    let digest = cs
+        .capture_page(url, &bytes, &media, &epoch, SystemClock.now())
+        .map_err(|e| CliError::new(ExitCode::PolicyDenied, e.to_string()))?;
+    Ok(CmdOutput::ok(kv(&[
+        ("digest", s(digest.to_string())),
+        ("media_type", s(media)),
+        ("bytes", json!(bytes.len())),
+    ])))
+}
+
+pub fn capture_list(ctx: &Ctx) -> CmdResult {
+    let (_, store) = ctx.open()?;
+    let rows: Vec<Value> = store
+        .list_captures()?
+        .into_iter()
+        .map(|c| {
+            kv(&[
+                ("digest", s(c.digest.to_string())),
+                ("tool", s(c.tool)),
+                ("provider", s(c.provider)),
+                (
+                    "as_of",
+                    c.as_of.map(|a| s(a.canonical())).unwrap_or(Value::Null),
+                ),
+                ("as_of_basis", c.as_of_basis.map(s).unwrap_or(Value::Null)),
+                ("retrieved_at", s(c.retrieved_at.canonical())),
+                ("note", c.note.map(s).unwrap_or(Value::Null)),
+            ])
+        })
+        .collect();
+    Ok(CmdOutput::ok(Value::Array(rows)))
 }

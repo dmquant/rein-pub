@@ -20,26 +20,26 @@ M0-owed tests live in `crates/rein-core/tests/invariants.rs` and are named
 | 7 | Canonical encoding (C1) + exclusion set (C2) | **M0** ✅ | `canon::parse_canon_json`, `context_pack::ContextPack::semantic_hash` | `inv07__canon_canonicalize__…` + `canonical_vectors.rs` + `prop_canon.rs` |
 | 8 | Exact pins or declared method; model_id = requested + served | **M0** ✅ | `pins::ProviderPin`, `hand::ModelIdentity` | `inv08__pins_providerpin__…` |
 | 9 | Resolvable attempt join key on every proposed fact | **M0** ✅ | `selection::resolve_attempt_ref` | `inv09__selection_resolve_attempt_ref__…` |
-| 10 | Budgets = max_steps + per_step_timeout_ms | M2 (schema at M0: `context_pack::Budget`, `hand::per_step_breach`) | — | owed M2 |
-| 11 | Hand-internal retries disabled; `attempts` recorded | M2 (schema at M0: `hand::HandRequest::internal_retries_disabled`) | — | owed M2 (gate-models retries=0 path) |
-| 12 | Every stage checkpoints; `--resume`; nothing non-resumable | M2 | — | owed M2 |
-| 13 | PIT: past-cutoff epochs read own-CAS only; eval/production modes | M2 (schema at M0: `context_pack::PitMode`) | — | owed M2 |
-| 14 | Temporal leakage is a validator | M2 | — | owed M2 |
-| 15 | knowledge_cutoff advisory, stamped honestly | M2 | — | owed M2 |
-| 16 | Numeric datum carries its time axes or the tool refuses | M2 | — | owed M2 |
-| 17 | Captured bytes or claims degrade to unresolved | M2 | — | owed M2 |
-| 18 | Citation closure validator | M2 | — | owed M2 |
-| 19 | Publisher spread; syndication ≠ corroboration | M2 | — | owed M2 |
-| 20 | Coverage denominators over enumerable sets; drops counted | M2 | — | owed M2 |
-| 21 | Direct/inherited never summed; falsifier discipline | M2 | — | owed M2 |
+| 10 | Budgets = max_steps + per_step_timeout_ms | **M2** ✅ | `hand::per_step_breach` + engine Budget receipt | `inv10__engine_budget__…` (m2_acceptance) |
+| 11 | Hand-internal retries disabled; `attempts` recorded | **M2** ✅ | `hands::AgyHand` (single-shot by construction; attempts recorded) | `inv11_26__agy_hand__…` (m2_acceptance). Deviation recorded: rein ships its own agy adapter instead of consuming gate-models (whose retry loops violate this invariant) |
+| 12 | Every stage checkpoints; `--resume`; nothing non-resumable | **M2** ✅ | per-phase receipt persistence + `selection::task_satisfied`-driven plan sweep | `inv12__plan_sweep_resume__…` (m2_acceptance) |
+| 13 | PIT: past-cutoff epochs read own-CAS only; eval/production modes | **M2** ✅ | `capture::ensure_live_permitted`, `capture::capture_admissible` | `inv13__capture_ensure_live_permitted__…` (m2_acceptance) |
+| 14 | Temporal leakage is a validator | **M2** ✅ | validator `fact-vs-forecast@1` | `inv14__fact_vs_forecast__…` (m2_acceptance) |
+| 15 | knowledge_cutoff advisory, stamped honestly | **M2** ✅ | engine environment receipt (advisory note on hand_internal_network runs) | covered in engine notes; pane rendering owed M4 |
+| 16 | Numeric datum carries its time axes or the tool refuses | **M2** ✅ | `datum::Stamped::new` | `inv16__datum_stamped_new__…` (m2_acceptance) |
+| 17 | Captured bytes or claims degrade to unresolved | **M2** ✅ | validator `citation-closure@1` | `inv17_18__citation_closure__…` (m2_acceptance) |
+| 18 | Citation closure validator | **M2** ✅ | validator `citation-closure@1` | `inv17_18__citation_closure__…` (m2_acceptance) |
+| 19 | Publisher spread; syndication ≠ corroboration | **M2** ✅ | `capture::CaptureStore::capture_page` (host cap) | `inv19__capture_page__…` (m2_acceptance) |
+| 20 | Coverage denominators over enumerable sets; drops counted | **M2** ✅ | validator `coverage-denominator@1` + `comps` counted exclusions | `inv20__coverage_denominator__…` + compute suite |
+| 21 | Direct/inherited never summed; falsifier discipline | **M2** ✅ (falsifier face; direct-vs-inherited aggregation arrives with verify/settle at M5) | `schemas::claim_admissible`, validator `falsifier-present@1` | `inv21__schemas_claim_admissible__…` |
 | 22 | Every transition appends a receipt; state resolves from ledger | **M0** ✅ → **M1** ✅ re-pointed at the SQLite WAL ledger (append-only by trigger) | `state::apply_transition`, `store::Store` | `inv22__state_transition_apply__…` + `inv22__store_persist__…` (m1_acceptance) |
 | 23 | Idempotency scoped to request (C4); retry mints generation | **M0** ✅ | `idempotency::IdempotencyKey` | `inv23__idempotency_key__…` |
 | 24 | Fence generations from day one; stale generations cannot commit | **M0** ✅ | `fence::guard_commit`, `fence::issue_next_generation` | `inv24__fence_generation__…` |
 | 25 | Async-boundary checks tolerate the boundary's latency | M3 (first async check) | — | owed M3 |
-| 26 | Absolute paths; `env -i` scheduled-path test | M2 (schema at M0: `receipts::ReceiptBody::Environment`) | — | owed M2 |
+| 26 | Absolute paths; `env -i` scheduled-path test | **M2** ✅ | `hands::AgyHand::resolve` (absolute or refuse) | `inv11_26__agy_hand__…` (spawned under a scrubbed PATH-only env) |
 | 27 | configRoot ≠ workspaceRoot | **M1** ✅ | `workspace::SecretBroker::open` | `inv27__workspace_secretbroker_open__…` (m1_acceptance) |
 | 28 | Secrets are references; quarantine = verdict + receipt (C6) | **M0** ✅ (schema-side; brokered injection M2) | `secretref::Redactor`, `receipts::ReceiptBody::Quarantine` | `inv28__secretref__…` |
-| 29 | Grants explicit, expiring, non-transitive; TOFU | M2 (schema at M0: `entities::CapabilityGrant` — `expires_at` mandatory, no delegation field) | — | owed M2 |
+| 29 | Grants explicit, expiring, non-transitive; TOFU | **M2** ✅ | `workspace::SecretBroker::env_for` (absence is never permission) + `entities::CapabilityGrant` shape | `inv29__secretbroker_env_for__…` |
 | 30 | Incremental UTF-8 decode retaining partial sequences | **M0** ✅ | `capture::Utf8StreamDecoder` | `inv30__capture_utf8streamdecoder__…` |
 | 31 | Absence is stated, never blank | M4 (schema seed at M0: `axes::Axis::NotYetRecorded`, `axes::ExternalAxis`) | — | owed M4 |
 | 32 | Disabled actions explain; statuses name their receipt | M4 | — | owed M4 |

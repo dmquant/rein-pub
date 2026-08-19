@@ -115,6 +115,8 @@ fn fixture() -> Fixture {
             task_type: "valuation".into(),
             output_contract: contract(),
             satisfaction_criteria: vec!["first-valid-deterministic@1".into()],
+            inputs: vec![],
+            universe: vec![],
         })
         .unwrap();
 

@@ -179,6 +179,12 @@ pub struct UserConfig {
     pub agora_key_path: Option<String>,
     #[serde(default)]
     pub agy_path: Option<String>,
+    #[serde(default)]
+    pub agy_model: Option<String>,
+    /// An operator-named env file to fall back to for provider keys
+    /// (e.g. the sibling-estate `.env`) — a pointer, never a value.
+    #[serde(default)]
+    pub fmp_env_file: Option<String>,
 }
 
 pub fn default_config_root() -> PathBuf {
@@ -215,6 +221,8 @@ pub fn load_user_config(config_root: &Path) -> UserConfig {
             "fmp_key_ref" => cfg.fmp_key_ref = Some(v),
             "agora_key_path" => cfg.agora_key_path = Some(v),
             "agy_path" => cfg.agy_path = Some(v),
+            "agy_model" => cfg.agy_model = Some(v),
+            "fmp_env_file" => cfg.fmp_env_file = Some(v),
             _ => {}
         }
     }

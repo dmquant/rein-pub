@@ -130,6 +130,13 @@ pub struct TaskVersion {
     pub task_type: String,
     pub output_contract: OutputContract,
     pub satisfaction_criteria: Vec<String>,
+    /// Pinned inputs (CAS captures / institute material), copied into the
+    /// pack at freeze (M2+). Additive; absent in M0/M1 records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<crate::ids::ArtifactRef>,
+    /// Instruments in scope (§5 `universe`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub universe: Vec<String>,
 }
 
 /// One fenced try under one ContextPack; immutable after closure. State is

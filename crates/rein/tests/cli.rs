@@ -60,7 +60,7 @@ fn setup(cli: &Cli) {
     write(
         cli.ws.path(),
         "plan.yaml",
-        "plan_ref: plan:p@1\nnodes:\n  - task_ref: task:val@1\n    task_type: valuation\n",
+        "plan_ref: plan:p@1\nnodes:\n  - task_ref: task:val@1\n    task_type: fixture\n",
     );
     assert_eq!(cli.run(&["plan", "apply", "-f", "plan.yaml"]).0, 0);
 }

@@ -144,14 +144,28 @@ impl<'a> Engine<'a> {
             ));
         }
 
-        // Instruction artifacts live in the CAS like everything else.
-        let system = self.cas.put(
-            format!(
-                "rein system instructions v1\ntask_type={}\n",
-                task.task_type
-            )
-            .as_bytes(),
-        )?;
+        // Instruction artifacts live in the CAS like everything else. A
+        // SKILL.md for the task type, when installed, becomes the system
+        // instructions and its validator_refs join the contract (M2) — the
+        // manifest format is the fabric's, with additive keys.
+        let skill_path = self
+            .workspace
+            .skills()
+            .join(format!("{}.md", task.task_type));
+        let (skill_validators, system_text) = match std::fs::read_to_string(&skill_path) {
+            Ok(content) => {
+                let (front, body) = parse_skill_frontmatter(&content);
+                (front, body)
+            }
+            Err(_) => (
+                Vec::new(),
+                format!(
+                    "rein system instructions v1\ntask_type={}\n",
+                    task.task_type
+                ),
+            ),
+        };
+        let system = self.cas.put(system_text.as_bytes())?;
         let task_instr = self
             .cas
             .put(format!("task instructions for {}\n", task.task_ref).as_bytes())?;
@@ -172,8 +186,8 @@ impl<'a> Engine<'a> {
             source_cutoff: epoch.source_cutoff,
             knowledge_cutoff: epoch.knowledge_cutoff,
             provider_pins: epoch.provider_pins.clone(),
-            universe: Vec::new(),
-            inputs: Vec::new(),
+            universe: task.universe.clone(),
+            inputs: task_inputs(self.store, &task)?,
             instructions: rein_core::context_pack::Instructions {
                 system_ref: aref(&system),
                 task_ref: aref(&task_instr),
@@ -193,9 +207,25 @@ impl<'a> Engine<'a> {
                 secrets: self.broker.known_refs(),
             },
             budget: epoch.budget_envelope.clone(),
-            output_contract: task.output_contract.clone(),
+            output_contract: {
+                let mut c = task.output_contract.clone();
+                for v in skill_validators {
+                    if let Ok(vr) = rein_core::ids::ValidatorRef::parse(&v) {
+                        if !c.validators.contains(&vr) {
+                            c.validators.push(vr);
+                        }
+                    }
+                }
+                c
+            },
             created_at: self.clock.now(),
         };
+        // Research-capable hands declare their own egress (§6): the sandbox
+        // cannot see inside agy, and pretending otherwise would be the
+        // CapabilityGrant-doc defect again.
+        if hand_selector.starts_with("agy") {
+            pack.capabilities.hand_internal_network = true;
+        }
         pack.seal()?;
         Ok(pack)
     }
@@ -290,7 +320,9 @@ impl<'a> Engine<'a> {
         for d in [&inputs_dir, &output_dir] {
             std::fs::create_dir_all(d).map_err(io_err(d.clone()))?;
         }
-        // Mount pinned inputs read-only from the CAS.
+        // Mount pinned inputs read-only from the CAS, with a manifest so
+        // hands can tell which input is which.
+        let mut manifest_entries = Vec::new();
         for (i, input) in pack.inputs.iter().enumerate() {
             let digest =
                 Sha256Digest::parse(input.artifact_ref.as_str().trim_start_matches("artifact:"))
@@ -300,13 +332,40 @@ impl<'a> Engine<'a> {
                         )))
                     })?;
             let bytes = self.cas.read_verified(&digest)?;
-            let path = inputs_dir.join(format!("input-{i:02}"));
+            let file = format!("input-{i:02}");
+            let path = inputs_dir.join(&file);
             std::fs::write(&path, bytes).map_err(io_err(path.clone()))?;
             let mut perms = std::fs::metadata(&path)
                 .map_err(io_err(path.clone()))?
                 .permissions();
             perms.set_readonly(true);
             std::fs::set_permissions(&path, perms).map_err(io_err(path))?;
+            manifest_entries.push(serde_json::json!({
+                "file": file,
+                "artifact_ref": input.artifact_ref.as_str(),
+                "media_type": input.media_type,
+                "note": input.note,
+            }));
+        }
+        let manifest_path = inputs_dir.join("inputs.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest_entries).expect("manifest serializes"),
+        )
+        .map_err(io_err(manifest_path))?;
+        let mut env_notes = vec![
+            "non-coverage: egress exfiltration, reads outside $HOME, wrong-file-inside-root (byte-reading validation runs regardless), anything after exit (§7)".to_string(),
+            format!("inputs mounted read-only: {}", pack.inputs.len()),
+        ];
+        if pack.capabilities.hand_internal_network {
+            env_notes.push(
+                "network: delegated to hand (hand_internal_network) — the sandbox cannot see inside it; egress unenforced, stated (§6)".to_string(),
+            );
+            env_notes.push(
+                "knowledge-cutoff: advisory — a served model trained after the cutoff cannot be prevented from laundering later knowledge (invariant 15)".to_string(),
+            );
+        } else {
+            env_notes.push("in-process hand: OS sandbox not applicable".to_string());
         }
         log.append(
             &mut ids,
@@ -314,11 +373,7 @@ impl<'a> Engine<'a> {
             at,
             ReceiptBody::Environment {
                 binary_paths: vec![],
-                notes: vec![
-                    "in-process fixture hand: OS sandbox not applicable at M1".to_string(),
-                    "non-coverage: egress exfiltration, reads outside $HOME, wrong-file-inside-root (byte-reading validation runs regardless), anything after exit (§7)".to_string(),
-                    format!("inputs mounted read-only: {}", pack.inputs.len()),
-                ],
+                notes: env_notes,
             },
         );
         self.sync(&log, &mut persisted, &ids)?;
@@ -772,5 +827,53 @@ impl<'a> Engine<'a> {
             PitMode::Eval => false,
             PitMode::Production => epoch.source_cutoff >= now,
         }
+    }
+}
+
+/// Resolve a task's pinned inputs into pack `InputPin`s, with media type and
+/// note from the capture index when present.
+fn task_inputs(
+    store: &Store,
+    task: &rein_core::entities::TaskVersion,
+) -> Result<Vec<rein_core::context_pack::InputPin>, EngineError> {
+    let mut out = Vec::new();
+    for aref in &task.inputs {
+        let digest = aref.as_str().trim_start_matches("artifact:").to_string();
+        let row = store.get_capture(&digest)?;
+        let (media_type, note) = match row {
+            Some(r) => (
+                r.media_type,
+                r.note.unwrap_or_else(|| format!("{}:{}", r.tool, r.params)),
+            ),
+            None => (
+                "application/octet-stream".to_string(),
+                "pinned input".to_string(),
+            ),
+        };
+        out.push(rein_core::context_pack::InputPin {
+            artifact_ref: aref.clone(),
+            media_type,
+            note,
+            required: true,
+        });
+    }
+    Ok(out)
+}
+
+/// Minimal SKILL.md frontmatter reader: `validator_refs` plus the body.
+fn parse_skill_frontmatter(content: &str) -> (Vec<String>, String) {
+    let mut parts = content.splitn(3, "---");
+    let _ = parts.next();
+    match (parts.next(), parts.next()) {
+        (Some(front), Some(body)) => {
+            #[derive(serde::Deserialize, Default)]
+            struct Front {
+                #[serde(default)]
+                validator_refs: Vec<String>,
+            }
+            let f: Front = serde_yaml::from_str(front).unwrap_or_default();
+            (f.validator_refs, body.trim_start().to_string())
+        }
+        _ => (Vec::new(), content.to_string()),
     }
 }

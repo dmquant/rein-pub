@@ -102,10 +102,40 @@ CREATE TABLE IF NOT EXISTS runs(
   hand_selector    TEXT NOT NULL,
   started_at       TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS captures(
+  digest       TEXT PRIMARY KEY,
+  tool         TEXT NOT NULL,
+  params       TEXT NOT NULL,
+  provider     TEXT NOT NULL,
+  media_type   TEXT NOT NULL,
+  as_of        TEXT,
+  as_of_basis  TEXT,
+  retrieved_at TEXT NOT NULL,
+  url          TEXT,
+  host         TEXT,
+  note         TEXT
+);
 "#;
 
 pub struct Store {
     conn: Connection,
+}
+
+/// One data-tool pull, captured to CAS at retrieval time — which is what
+/// makes past-cutoff epochs possible at all (invariant 13).
+#[derive(Debug, Clone)]
+pub struct CaptureRow {
+    pub digest: rein_core::canon::Sha256Digest,
+    pub tool: String,
+    pub params: String,
+    pub provider: String,
+    pub media_type: String,
+    pub as_of: Option<Timestamp>,
+    pub as_of_basis: Option<String>,
+    pub retrieved_at: Timestamp,
+    pub url: Option<String>,
+    pub host: Option<String>,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -626,6 +656,78 @@ impl Store {
             out.push((RunId::parse(&id)?, hand));
         }
         Ok(out)
+    }
+
+    // ---- captures (data-tool pulls, invariant 13/16) -----------------------
+
+    pub fn insert_capture(&mut self, row: &CaptureRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO captures(digest, tool, params, provider, media_type, as_of, as_of_basis, retrieved_at, url, host, note)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![
+                row.digest.as_str(),
+                row.tool,
+                row.params,
+                row.provider,
+                row.media_type,
+                row.as_of.map(|a| a.canonical()),
+                row.as_of_basis,
+                row.retrieved_at.canonical(),
+                row.url,
+                row.host,
+                row.note,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_capture(&self, digest: &str) -> Result<Option<CaptureRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT digest, tool, params, provider, media_type, as_of, as_of_basis, retrieved_at, url, host, note
+             FROM captures WHERE digest=?1",
+        )?;
+        let mut rows = stmt.query(params![digest])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(Self::row_to_capture(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_captures(&self) -> Result<Vec<CaptureRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT digest, tool, params, provider, media_type, as_of, as_of_basis, retrieved_at, url, host, note
+             FROM captures ORDER BY retrieved_at, digest",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(Self::row_to_capture(row)?);
+        }
+        Ok(out)
+    }
+
+    fn row_to_capture(row: &rusqlite::Row<'_>) -> Result<CaptureRow, StoreError> {
+        let digest: String = row.get(0)?;
+        let as_of: Option<String> = row.get(5)?;
+        let retrieved_at: String = row.get(7)?;
+        Ok(CaptureRow {
+            digest: rein_core::canon::Sha256Digest::parse(&digest).map_err(|_| {
+                StoreError::NotFound {
+                    kind: "capture digest",
+                    key: digest.clone(),
+                }
+            })?,
+            tool: row.get(1)?,
+            params: row.get(2)?,
+            provider: row.get(3)?,
+            media_type: row.get(4)?,
+            as_of: as_of.map(|a| Timestamp::parse(&a)).transpose()?,
+            as_of_basis: row.get(6)?,
+            retrieved_at: Timestamp::parse(&retrieved_at)?,
+            url: row.get(8)?,
+            host: row.get(9)?,
+            note: row.get(10)?,
+        })
     }
 
     /// Doctor: integrity + the append-only triggers must exist.

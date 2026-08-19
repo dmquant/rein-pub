@@ -15,16 +15,19 @@ optional.
 
 ## Status
 
-**M0 — contracts (networkless, modelless): landed.** `crates/rein-core` holds
-the entities, the 10-state attempt lifecycle, the 10-value TerminalOutcome
-vocabulary with its total exit-code mapping, ContextPack canonical hashing,
-receipt schemas, the fake-hand protocol with all ten conformance fixtures, and
-the incremental UTF-8 capture decoder. No binary yet — the first `rein` CLI
-surface lands at M1 per §9.
+**M0 contracts ✅ · M1 local deterministic proof ✅.** `crates/rein-core`
+holds the contracts (entities, 10-state lifecycle, TerminalOutcome vocabulary
+with its total exit mapping, canonical hashing, receipts, the ten fake-hand
+fixtures, the incremental UTF-8 decoder). `crates/rein-runtime` makes them
+durable: SQLite WAL ledger append-only *by trigger*, filesystem CAS with
+fresh-handle read-back, the §7 pipeline, strict replay. `crates/rein` is the
+`rein` binary — §9's M1 command set, JSON envelope, closed exit-code
+vocabulary, wait assertions.
 
 ```
-cargo test        # 38 tests: vectors, property suites, invariant manifest,
-                  # the §6 failure matrix at M0 depth, the dependency fence
+cargo test        # vectors, property suites, invariant manifest, the §6
+                  # failure matrix (pure and over the real store), the
+                  # dependency fence, CLI integration
 ```
 
 Two properties hold crate-wide: no process exit or path can imply success

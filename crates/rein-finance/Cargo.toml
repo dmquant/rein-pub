@@ -1,0 +1,21 @@
+[package]
+name = "rein-finance"
+description = "Rein M2 — the finance domain layer: stamped data tools, deterministic compute tools, PIT enforcement, finance validators, task types and hands"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rein-core = { path = "../rein-core" }
+rein-runtime = { path = "../rein-runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_yaml = "0.9"
+thiserror = "1"
+# HTTP pattern proven in the sibling-estate estate: blocking ureq with an explicit
+# native-tls connector.
+ureq = { version = "=2.12.1", default-features = false, features = ["json", "native-tls"] }
+native-tls = "0.2"
+
+[dev-dependencies]
+tempfile = "=3.10.1"

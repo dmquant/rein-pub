@@ -109,6 +109,36 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EventsCmd,
     },
+    /// Data tools (M2): stamped pulls captured to CAS or refused
+    Data {
+        #[command(subcommand)]
+        cmd: DataCmd,
+    },
+    /// The workspace capture index
+    Capture {
+        #[command(subcommand)]
+        cmd: CaptureCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DataCmd {
+    /// Pull FMP equity endpoints for a symbol under the sealed epoch
+    PullEquity {
+        symbol: String,
+        /// quote,profile,income,balance,cashflow,estimates,prices | all
+        #[arg(long, default_value = "all")]
+        kinds: String,
+    },
+    /// SearXNG search (hits only; capture happens on fetch)
+    Search { query: String },
+    /// Fetch a URL and capture today's bytes (production mode)
+    Fetch { url: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum CaptureCmd {
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -227,6 +257,12 @@ enum TaskCmd {
         task_type: String,
         #[arg(long)]
         contract_file: Option<String>,
+        /// Pin a capture as input (repeatable): capture:<sha256:…>
+        #[arg(long = "input")]
+        inputs: Vec<String>,
+        /// Instrument in scope (repeatable): security:<sym>
+        #[arg(long = "universe")]
+        universe: Vec<String>,
     },
     List,
     Show {
@@ -393,7 +429,17 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
                 plan,
                 task_type,
                 contract_file,
-            } => cmds::task_add(ctx, name, plan, task_type, contract_file.as_deref()),
+                inputs,
+                universe,
+            } => cmds::task_add(
+                ctx,
+                name,
+                plan,
+                task_type,
+                contract_file.as_deref(),
+                inputs,
+                universe,
+            ),
             TaskCmd::List => cmds::task_list(ctx),
             TaskCmd::Show { name } => cmds::task_show(ctx, name),
             TaskCmd::Ready => cmds::task_ready(ctx),
@@ -432,6 +478,14 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
         Cmd::Events { cmd } => match cmd {
             EventsCmd::List { run } => cmds::events_list(ctx, run, None),
             EventsCmd::Tail { run, n } => cmds::events_list(ctx, run, Some(*n)),
+        },
+        Cmd::Data { cmd } => match cmd {
+            DataCmd::PullEquity { symbol, kinds } => cmds::data_pull_equity(ctx, symbol, kinds),
+            DataCmd::Search { query } => cmds::data_search(ctx, query),
+            DataCmd::Fetch { url } => cmds::data_fetch(ctx, url),
+        },
+        Cmd::Capture { cmd } => match cmd {
+            CaptureCmd::List => cmds::capture_list(ctx),
         },
     }
 }
