@@ -1721,7 +1721,12 @@ pub fn tui(ctx: &Ctx) -> CmdResult {
 
 // ---- M5: eval two-track + evidence publish ----------------------------------
 
-pub fn eval_financegym(ctx: &Ctx, file: Option<&str>, answers_file: Option<&str>) -> CmdResult {
+pub fn eval_financegym(
+    ctx: &Ctx,
+    file: Option<&str>,
+    answers_file: Option<&str>,
+    grades_file: Option<&str>,
+) -> CmdResult {
     let text = match file {
         Some(path) => std::fs::read_to_string(path)
             .map_err(|e| CliError::new(ExitCode::NotFound, format!("{path}: {e}")))?,
@@ -1737,19 +1742,34 @@ pub fn eval_financegym(ctx: &Ctx, file: Option<&str>, answers_file: Option<&str>
         }
         None => Default::default(),
     };
+    let grades: std::collections::BTreeMap<String, u8> = match grades_file {
+        Some(path) => {
+            let t = std::fs::read_to_string(path)
+                .map_err(|e| CliError::new(ExitCode::NotFound, format!("{path}: {e}")))?;
+            serde_json::from_str(&t).map_err(|e| CliError::new(ExitCode::Usage, e.to_string()))?
+        }
+        None => Default::default(),
+    };
     // Zero influence on any TerminalOutcome: scoring reads artifacts/answers
     // only and appends no receipts.
     let before = ctx.open().ok().map(|(_, s)| s.receipt_count().unwrap_or(0));
-    let report = rein_finance::eval::score_run(&questions, &answers);
+    let report = rein_finance::eval::score_run(&questions, &answers, &grades);
     if let (Some(b), Ok((_, s))) = (before, ctx.open()) {
         debug_assert_eq!(s.receipt_count().unwrap_or(0), b);
     }
-    let out = CmdOutput::ok(j(&report));
-    Ok(if answers.is_empty() {
-        out.warn("no --answers file: scored an empty answer set (all tier 0). Run hands over the questions and pass their answers to score them.")
-    } else {
-        out
-    })
+    let ungraded = report.ungraded;
+    let graded = report.graded;
+    let mut out = CmdOutput::ok(j(&report));
+    if ungraded > 0 {
+        out = out.warn(format!(
+            "{ungraded} of {} questions carry neither an external grade nor machine-checkable expectations — reported as ungraded, never as zero. The public FinanceGym release ships questions only; run your hands over them, grade per the 0–4 rubric (human or judge), and pass --grades <id→tier JSON> to compute s/(4n) with its bootstrap CI.",
+            report.n
+        ));
+    }
+    if graded > 0 && answers.is_empty() && grades.is_empty() {
+        out = out.warn("no --answers and no --grades: expectation-graded questions scored an empty answer set (tier 0)");
+    }
+    Ok(out)
 }
 
 pub fn eval_internal(ctx: &Ctx) -> CmdResult {

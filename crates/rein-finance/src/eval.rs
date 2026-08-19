@@ -33,27 +33,46 @@ pub enum Expectation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalQuestion {
+    /// The public FinanceGym release names this `task_id`; both spellings load.
+    #[serde(alias = "task_id")]
     pub id: String,
     pub question: String,
     /// The PIT cutoff the answer must respect (recorded; enforcement is the
-    /// harness's, not the scorer's).
+    /// harness's, not the scorer's). Date-only forms are kept verbatim.
+    #[serde(default)]
     pub cutoff: String,
+    /// Machine-checkable expectations. The public 400-question release ships
+    /// none — such questions are reported as *ungraded*, never as zero.
+    #[serde(default)]
     pub expectations: Vec<Expectation>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct QuestionScore {
     pub id: String,
-    pub tier: u8,
+    /// The rubric tier when graded; absent means *ungraded* — a statement,
+    /// never a zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<u8>,
+    /// Where the tier came from: "external-grade" | "expectations".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graded_by: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EvalReport {
     pub n: usize,
+    pub graded: usize,
+    /// Questions with neither an external grade nor machine-checkable
+    /// expectations — counted and printed, never folded into the score.
+    pub ungraded: usize,
     pub s: u32,
-    /// s / (4n) — the FinanceGym statistic.
-    pub score: f64,
-    pub bootstrap_ci_95: (f64, f64),
+    /// s / (4·graded) — the FinanceGym statistic over graded questions;
+    /// absent when nothing was gradable (absence stated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bootstrap_ci_95: Option<(f64, f64)>,
     pub per_question: Vec<QuestionScore>,
 }
 
@@ -124,47 +143,84 @@ fn fnv(text: &str) -> u64 {
     h
 }
 
-pub fn score_run(questions: &[EvalQuestion], answers: &BTreeMap<String, String>) -> EvalReport {
+/// Score a run. Tiers come, in order of precedence, from an external grade
+/// (the paper's rubric method — a human or judge assigns 0–4 per question)
+/// or from machine-checkable expectations. A question with neither is
+/// *ungraded*: counted, printed, and excluded from the statistic — folding
+/// it in as zero would fabricate a result.
+pub fn score_run(
+    questions: &[EvalQuestion],
+    answers: &BTreeMap<String, String>,
+    grades: &BTreeMap<String, u8>,
+) -> EvalReport {
     let per_question: Vec<QuestionScore> = questions
         .iter()
-        .map(|q| QuestionScore {
-            id: q.id.clone(),
-            tier: answers.get(&q.id).map(|a| score_answer(q, a)).unwrap_or(0),
+        .map(|q| {
+            if let Some(g) = grades.get(&q.id) {
+                QuestionScore {
+                    id: q.id.clone(),
+                    tier: Some((*g).min(4)),
+                    graded_by: Some("external-grade"),
+                }
+            } else if !q.expectations.is_empty() {
+                QuestionScore {
+                    id: q.id.clone(),
+                    tier: Some(answers.get(&q.id).map(|a| score_answer(q, a)).unwrap_or(0)),
+                    graded_by: Some("expectations"),
+                }
+            } else {
+                QuestionScore {
+                    id: q.id.clone(),
+                    tier: None,
+                    graded_by: None,
+                }
+            }
         })
         .collect();
     let n = per_question.len();
-    let s: u32 = per_question.iter().map(|q| u32::from(q.tier)).sum();
-    let score = if n == 0 {
-        0.0
+    let tiers: Vec<u8> = per_question.iter().filter_map(|q| q.tier).collect();
+    let graded = tiers.len();
+    let ungraded = n - graded;
+    let s: u32 = tiers.iter().map(|t| u32::from(*t)).sum();
+    let score = if graded == 0 {
+        None
     } else {
-        f64::from(s) / (4.0 * n as f64)
+        Some(f64::from(s) / (4.0 * graded as f64))
     };
 
-    // Bootstrap CI (percentile, 1000 resamples), seeded from the ids.
-    let seed = questions.iter().fold(0u64, |acc, q| acc ^ fnv(&q.id));
-    let mut rng = Lcg(seed | 1);
-    let mut samples = Vec::with_capacity(1000);
-    for _ in 0..1000 {
-        let mut total = 0u32;
-        for _ in 0..n {
-            let idx = (rng.next() >> 16) as usize % n.max(1);
-            total += u32::from(per_question[idx].tier);
+    // Bootstrap CI (percentile, 1000 resamples) over the graded subset,
+    // seeded from the graded ids — deterministic.
+    let bootstrap_ci_95 = if graded == 0 {
+        None
+    } else {
+        let seed = per_question
+            .iter()
+            .filter(|q| q.tier.is_some())
+            .fold(0u64, |acc, q| acc ^ fnv(&q.id));
+        let mut rng = Lcg(seed | 1);
+        let mut samples = Vec::with_capacity(1000);
+        for _ in 0..1000 {
+            let mut total = 0u32;
+            for _ in 0..graded {
+                let idx = (rng.next() >> 16) as usize % graded;
+                total += u32::from(tiers[idx]);
+            }
+            samples.push(f64::from(total) / (4.0 * graded as f64));
         }
-        samples.push(if n == 0 {
-            0.0
-        } else {
-            f64::from(total) / (4.0 * n as f64)
-        });
-    }
-    samples.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
-    let lo = samples.get(24).copied().unwrap_or(score);
-    let hi = samples.get(974).copied().unwrap_or(score);
+        samples.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+        Some((
+            samples.get(24).copied().unwrap_or(0.0),
+            samples.get(974).copied().unwrap_or(0.0),
+        ))
+    };
 
     EvalReport {
         n,
+        graded,
+        ungraded,
         s,
         score,
-        bootstrap_ci_95: (lo, hi),
+        bootstrap_ci_95,
         per_question,
     }
 }

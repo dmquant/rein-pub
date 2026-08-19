@@ -160,15 +160,37 @@ fn financegym_scoring_deterministic_with_bootstrap_ci() {
     );
     answers.insert("fg-02".to_string(), "TSMC fabricates them.".to_string());
     // fg-03 unanswered → tier 0.
-    let r1 = score_run(&questions, &answers);
-    let r2 = score_run(&questions, &answers);
+    let no_grades = BTreeMap::new();
+    let r1 = score_run(&questions, &answers, &no_grades);
+    let r2 = score_run(&questions, &answers, &no_grades);
     assert_eq!(r1.s, 8, "4 + 4 + 0");
-    assert!((r1.score - 8.0 / 12.0).abs() < 1e-12, "s/(4n)");
+    assert_eq!((r1.graded, r1.ungraded), (3, 0));
+    let score = r1.score.unwrap();
+    assert!((score - 8.0 / 12.0).abs() < 1e-12, "s/(4·graded)");
     assert_eq!(
         r1.bootstrap_ci_95, r2.bootstrap_ci_95,
         "seeded bootstrap is deterministic"
     );
-    assert!(r1.bootstrap_ci_95.0 <= r1.score && r1.score <= r1.bootstrap_ci_95.1);
+    let (lo, hi) = r1.bootstrap_ci_95.unwrap();
+    assert!(lo <= score && score <= hi);
+
+    // The public FinanceGym shape — task_id, no expectations — loads, and
+    // its questions are UNGRADED, never zero (absence stated).
+    let public = r#"{"task_id":"pub-1","question":"open-ended?","cutoff":"2025-08-05"}"#;
+    let pubqs = load_questions_jsonl(public).unwrap();
+    assert_eq!(pubqs[0].id, "pub-1");
+    let r3 = score_run(&pubqs, &BTreeMap::new(), &no_grades);
+    assert_eq!((r3.graded, r3.ungraded), (0, 1));
+    assert!(r3.score.is_none(), "no fabricated statistic");
+    assert!(r3.per_question[0].tier.is_none());
+
+    // External rubric grades (the paper's method) feed the statistic.
+    let mut grades = BTreeMap::new();
+    grades.insert("pub-1".to_string(), 3u8);
+    let r4 = score_run(&pubqs, &BTreeMap::new(), &grades);
+    assert_eq!((r4.graded, r4.s), (1, 3));
+    assert!((r4.score.unwrap() - 0.75).abs() < 1e-12);
+    assert_eq!(r4.per_question[0].graded_by, Some("external-grade"));
 }
 
 fn ops_fixture() -> (Workspace, Store, tempfile::TempDir, tempfile::TempDir) {
@@ -369,7 +391,7 @@ fn m5__settle_task_end_to_end_and_internal_eval_ranks_hands() {
     let before = store.receipt_count().unwrap();
     let _ = rank_hands_on_settled(&cas, &store).unwrap();
     let questions = load_questions_jsonl(SAMPLE_QUESTIONS).unwrap();
-    let _ = score_run(&questions, &BTreeMap::new());
+    let _ = score_run(&questions, &BTreeMap::new(), &BTreeMap::new());
     assert_eq!(store.receipt_count().unwrap(), before);
 }
 

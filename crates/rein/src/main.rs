@@ -151,6 +151,9 @@ enum EvalCmd {
         /// JSON map of question id → answer text to score
         #[arg(long)]
         answers: Option<String>,
+        /// JSON map of question id → rubric tier 0–4 from an external grader
+        #[arg(long)]
+        grades: Option<String>,
     },
     /// Rank hands on the estate's own settled valuations
     Internal,
@@ -585,9 +588,11 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
         },
         Cmd::Recover => cmds::recover_queue(ctx),
         Cmd::Eval { cmd } => match cmd {
-            EvalCmd::Financegym { file, answers } => {
-                cmds::eval_financegym(ctx, file.as_deref(), answers.as_deref())
-            }
+            EvalCmd::Financegym {
+                file,
+                answers,
+                grades,
+            } => cmds::eval_financegym(ctx, file.as_deref(), answers.as_deref(), grades.as_deref()),
             EvalCmd::Internal => cmds::eval_internal(ctx),
         },
         Cmd::Propose { cmd } => match cmd {
