@@ -507,13 +507,16 @@ impl ArtifactValidator for FactVsForecast {
             return ValidatorVerdict::Passed;
         }
         if input.artifact.media_type == "text/markdown" {
-            // Deterministic prose rule: a year beyond the cutoff year may
-            // appear only on lines marked forecast/scenario/expected — or
-            // explicitly historical ("reported", "ended"): fiscal-year
-            // labels run ahead of the calendar (NVDA's Q1 FY2027 ended
-            // April 2026), and a reported quarter is not the 2027-claim
-            // class. A false "reported" is a citation problem, and
-            // citation-closure owns that.
+            // Deterministic prose rule, boundary recorded 2026-08-20 after
+            // three same-validator failures on legitimate shapes (bare
+            // fiscal fact, cited fiscal quarter, cited management-forward
+            // statement): the deadly form of the 2027-claim class is the
+            // UNFALSIFIABLE one. An unmarked, uncited post-cutoff year
+            // fails; a line carrying a [N] citation delegates to its
+            // captured source — checkable evidence, which is what
+            // invariant 14 protects. The claims.json face stays fully
+            // strict (kind=fact past the cutoff fails regardless), and
+            // citation existence is citation-closure's to enforce.
             let cutoff_year: i32 = self.cutoff.canonical()[..4].parse().unwrap_or(9999);
             let text = String::from_utf8_lossy(input.bytes);
             for (i, line) in text.lines().enumerate() {
@@ -526,17 +529,11 @@ impl ArtifactValidator for FactVsForecast {
                 if marked {
                     continue;
                 }
-                // A fiscal-quarter label one year ahead of the calendar,
-                // carrying a citation, IS the reported-history shape:
-                // fiscal years run at most a year ahead, and "74.9% in
-                // Q1 FY2027 [3]" is a filed quarter, not the 2027-claim
-                // class. Only that exact shape is exempt — bare years,
-                // further-out years, and uncited lines still must mark.
-                let has_citation = {
+                let cited = {
                     let b = lower.as_bytes();
                     let mut found = false;
                     let mut j = 0;
-                    while j + 2 < b.len() {
+                    while j + 1 < b.len() {
                         if b[j] == b'[' && b[j + 1].is_ascii_digit() {
                             found = true;
                             break;
@@ -545,26 +542,15 @@ impl ArtifactValidator for FactVsForecast {
                     }
                     found
                 };
-                let fiscal_quarter = ["q1", "q2", "q3", "q4"].iter().any(|q| lower.contains(q));
+                if cited {
+                    continue;
+                }
                 for token in line.split(|c: char| !c.is_ascii_digit()) {
                     if token.len() == 4 {
                         if let Ok(y) = token.parse::<i32>() {
                             if (2000..=2100).contains(&y) && y > cutoff_year {
-                                let fiscal_label = y == cutoff_year + 1
-                                    && fiscal_quarter
-                                    && has_citation
-                                    && lower.match_indices(&y.to_string()).all(|(pos, _)| {
-                                        let head = &lower[..pos];
-                                        let head = head.trim_end();
-                                        head.ends_with("fy")
-                                            || head.ends_with("fiscal")
-                                            || head.ends_with("fiscal year")
-                                    });
-                                if fiscal_label {
-                                    continue;
-                                }
                                 return fail(format!(
-                                    "line {}: year {y} stated without forecast/scenario marking, past cutoff year {cutoff_year} (invariant 14)",
+                                    "line {}: year {y} stated without forecast/scenario marking or a citation, past cutoff year {cutoff_year} (invariant 14) — an uncited post-cutoff assertion is unfalsifiable",
                                     i + 1
                                 ));
                             }

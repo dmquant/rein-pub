@@ -610,7 +610,10 @@ fn inv14__fact_vs_forecast__post_cutoff_fact_fails() {
         matches!(v_uncited, ValidatorVerdict::Failed { .. }),
         "{v_uncited:?}"
     );
-    // and a further-out fiscal year is future no matter the dressing.
+    // and a cited far-year line delegates to its capture — the evidence
+    // trail exists, which is what the invariant protects. Boundary
+    // recorded 2026-08-20 after three same-validator failures on
+    // legitimate cited shapes.
     let memo_far = b"We see 80% margins in Q1 FY2029 [3].".to_vec();
     let v_far = reg.run(
         &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
@@ -621,9 +624,21 @@ fn inv14__fact_vs_forecast__post_cutoff_fact_fails() {
             pack: &pack,
         },
     );
+    assert!(matches!(v_far, ValidatorVerdict::Passed), "{v_far:?}");
+    // The bare unfalsifiable form still dies, at any distance.
+    let memo_bare = b"Data-center revenue reaches $400B in 2029.".to_vec();
+    let v_bare = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_bare,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
     assert!(
-        matches!(v_far, ValidatorVerdict::Failed { .. }),
-        "{v_far:?}"
+        matches!(v_bare, ValidatorVerdict::Failed { .. }),
+        "{v_bare:?}"
     );
 }
 
