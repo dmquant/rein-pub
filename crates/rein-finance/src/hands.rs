@@ -163,22 +163,19 @@ pub(crate) fn estimate_growth_path(
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     let metric = rows[0].2;
-    let rates: Vec<f64> = rows
-        .windows(2)
-        .map(|w| (w[1].1 / w[0].1 - 1.0).clamp(-0.10, 0.40))
-        .collect();
-    let k = rates.len();
-    let mut path = [0.0; 5];
-    for (i, slot) in path.iter_mut().enumerate() {
-        let idx = ((i as f64) * ((k - 1) as f64) / 4.0).round() as usize;
-        *slot = rates[idx.min(k - 1)];
-    }
+    // Endpoint CAGR across the whole estimate window: interior-year dips in
+    // an *average* series are analyst-coverage artifacts, not forecasts.
+    let (first, last) = (&rows[0], &rows[rows.len() - 1]);
+    let years = (rows.len() - 1) as f64;
+    let cagr = ((last.1 / first.1).powf(1.0 / years) - 1.0).clamp(-0.10, 0.40);
     Some((
-        path,
+        [cagr; 5],
         c.digest.clone(),
         format!(
-            "analyst {metric} YoY over {} forward periods, clamped [-0.10, 0.40], resampled to 5y (FCF-growth proxy stated)",
-            rows.len()
+            "analyst {metric} endpoint CAGR {cagr:.4}/y over {} forward periods ({} → {}), clamped [-0.10, 0.40], held flat across the window (FCF-growth proxy stated)",
+            rows.len(),
+            first.0,
+            last.0
         ),
     ))
 }
@@ -1304,8 +1301,9 @@ mod estimate_growth_tests {
         ]);
         let (path, _, desc) =
             estimate_growth_path(&[cap(j, "fmp:analyst-estimates:MSFT")]).unwrap();
-        assert!((path[0] - (209.0 / 172.0 - 1.0)).abs() < 1e-9);
-        assert!((path[4] - (334.0 / 264.0 - 1.0)).abs() < 1e-9);
+        let cagr = (334.0f64 / 172.0).powf(1.0 / 3.0) - 1.0;
+        assert!(path.iter().all(|g| (*g - cagr).abs() < 1e-9), "{path:?}");
+        assert!(cagr > 0.0, "interior dip must not read as negative growth");
         assert!(desc.contains("revenueAvg"));
         // A 90% jump clamps to 40%; netIncome is the fallback series.
         let j = serde_json::json!([
