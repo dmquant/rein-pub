@@ -185,6 +185,123 @@ pub fn attempt_detail(store: &Store, aid: &AttemptId) -> Result<AttemptDetail, S
     })
 }
 
+// ---- results viewer: from an attempt straight to what it produced ----------
+
+/// One committed artifact with its content preview — the read goes through
+/// the CAS (`read_verified`: re-hashed on read, invariant 3's fresh-handle
+/// discipline), so what the viewer shows is what the receipts committed.
+pub struct ArtifactView {
+    pub name: String,
+    pub digest: String,
+    pub bytes: usize,
+    /// Validator verdicts recorded for this artifact name.
+    pub verdicts: Vec<(String, String)>,
+    /// Pretty content lines: JSON pretty-printed, text as-is, capped.
+    pub preview: Vec<String>,
+    pub truncated: bool,
+}
+
+pub struct ResultsView {
+    pub attempt_id: String,
+    pub task_ref: String,
+    pub artifacts: Vec<ArtifactView>,
+    pub selected: usize,
+    pub scroll: u16,
+}
+
+impl ResultsView {
+    pub fn next(&mut self) {
+        if !self.artifacts.is_empty() {
+            self.selected = (self.selected + 1).min(self.artifacts.len() - 1);
+            self.scroll = 0;
+        }
+    }
+    pub fn prev(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+        self.scroll = 0;
+    }
+}
+
+const PREVIEW_MAX_LINES: usize = 400;
+
+fn build_preview(bytes: &[u8]) -> (Vec<String>, bool) {
+    let text = match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_default(),
+        Err(_) => String::from_utf8_lossy(bytes).to_string(),
+    };
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let truncated = lines.len() > PREVIEW_MAX_LINES;
+    lines.truncate(PREVIEW_MAX_LINES);
+    (lines, truncated)
+}
+
+pub fn attempt_results(
+    ws: &Workspace,
+    store: &Store,
+    aid: &AttemptId,
+) -> Result<ResultsView, String> {
+    let row = store.get_attempt(aid).map_err(|e| e.to_string())?;
+    let log = store.load_attempt_log(aid).map_err(|e| e.to_string())?;
+    let cas = rein_runtime::cas::Cas::new(ws.objects());
+    let mut verdicts_by_name: std::collections::BTreeMap<String, Vec<(String, String)>> =
+        Default::default();
+    for e in log.for_attempt(aid) {
+        if let ReceiptBody::Validation {
+            artifact_name,
+            validator,
+            verdict,
+            ..
+        } = &e.body
+        {
+            let v = match verdict {
+                ValidatorVerdict::Passed => "passed".to_string(),
+                ValidatorVerdict::Failed { reason } => format!("failed: {reason}"),
+                ValidatorVerdict::Quarantined { reason } => format!("quarantined: {reason}"),
+            };
+            verdicts_by_name
+                .entry(artifact_name.clone())
+                .or_default()
+                .push((validator.to_string(), v));
+        }
+    }
+    let mut artifacts = Vec::new();
+    for e in log.for_attempt(aid) {
+        if let ReceiptBody::Commit {
+            artifacts: recs, ..
+        } = &e.body
+        {
+            for r in recs {
+                let Some(d) = &r.readback_digest else {
+                    continue;
+                };
+                let (preview, bytes, truncated) = match cas.read_verified(d) {
+                    Ok(b) => {
+                        let n = b.len();
+                        let (lines, trunc) = build_preview(&b);
+                        (lines, n, trunc)
+                    }
+                    Err(err) => (vec![format!("(unreadable from CAS: {err})")], 0, false),
+                };
+                artifacts.push(ArtifactView {
+                    name: r.name.clone(),
+                    digest: d.to_string(),
+                    bytes,
+                    verdicts: verdicts_by_name.get(&r.name).cloned().unwrap_or_default(),
+                    preview,
+                    truncated,
+                });
+            }
+        }
+    }
+    Ok(ResultsView {
+        attempt_id: aid.as_str().to_string(),
+        task_ref: row.task_ref.as_str().to_string(),
+        artifacts,
+        selected: 0,
+        scroll: 0,
+    })
+}
+
 // ---- compare (§10 screen 4): six difference classes, complete --------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

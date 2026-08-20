@@ -52,7 +52,16 @@ fn field(label: &str, value: String, style: Style) -> Line<'_> {
 }
 
 /// Top chrome: brand, the four screens as tabs, the workspace.
-pub fn render_tabs(f: &mut Frame<'_>, area: Rect, active: Screen, workspace: &str) {
+const SPINNER: [&str; 6] = ["⠋", "⠙", "⠸", "⠴", "⠦", "⠇"];
+
+pub fn render_tabs(
+    f: &mut Frame<'_>,
+    area: Rect,
+    active: Screen,
+    workspace: &str,
+    running: usize,
+    frame: u64,
+) {
     let tab = |n: &str, name: &str, s: Screen| -> Vec<Span<'static>> {
         let label = format!(" {n} {name} ");
         if s == active {
@@ -73,11 +82,18 @@ pub fn render_tabs(f: &mut Frame<'_>, area: Rect, active: Screen, workspace: &st
     spans.extend(tab("3", "recovery", Screen::Recovery));
     spans.extend(tab("4", "compare", Screen::Compare));
     spans.push(Span::styled(format!("  {workspace}"), theme::muted()));
+    if running > 0 {
+        let spin = SPINNER[(frame as usize) % SPINNER.len()];
+        spans.push(Span::styled(
+            format!("  {spin} {running} running"),
+            theme::accent(),
+        ));
+    }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// Bottom chrome: the keys that matter here, keycaps bright, labels muted.
-pub fn render_keybar(f: &mut Frame<'_>, area: Rect, screen: Screen) {
+pub fn render_keybar(f: &mut Frame<'_>, area: Rect, screen: Screen, results_open: bool) {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut hint = |k: &'static str, label: &'static str| {
         if !spans.is_empty() {
@@ -89,21 +105,128 @@ pub fn render_keybar(f: &mut Frame<'_>, area: Rect, screen: Screen) {
         ));
         spans.push(Span::styled(format!(" {label}"), theme::muted()));
     };
-    hint("j/k", "move");
-    match screen {
-        Screen::MissionControl => hint("a/b", "mark compare pair"),
-        Screen::LiveAttempt => hint("p", "publish (receipt-gated)"),
-        Screen::Recovery => {
-            hint("m/r/u", "the three safe actions");
-            hint("y/n", "confirm");
+    if results_open {
+        hint("j/k", "scroll");
+        hint("n/p", "next/prev artifact");
+        hint("Esc", "back");
+        hint("1-4", "screens");
+        hint("q", "quit");
+    } else {
+        hint("j/k", "move");
+        hint("Enter", "open results");
+        match screen {
+            Screen::MissionControl => hint("a/b", "mark compare pair"),
+            Screen::LiveAttempt => hint("p", "publish (receipt-gated)"),
+            Screen::Recovery => {
+                hint("m/r/u", "the three safe actions");
+                hint("y/n", "confirm");
+            }
+            Screen::Compare => hint("a/b", "mark on mission control"),
         }
-        Screen::Compare => hint("a/b", "mark on mission control"),
+        hint("1-4", "screens");
+        hint("?", "help");
+        hint(":", "palette");
+        hint("q", "quit");
     }
-    hint("1-4", "screens");
-    hint("?", "help");
-    hint(":", "palette");
-    hint("q", "quit");
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The results viewer: artifact list left, verified content right — from a
+/// row on any screen straight to what the attempt actually produced, read
+/// back through the CAS. Absence is stated; truncation is stated.
+pub fn render_results(f: &mut Frame<'_>, area: Rect, rv: &super::data::ResultsView) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(32), Constraint::Percentage(68)])
+        .split(area);
+
+    let title = format!("results — {} ({})", rv.attempt_id, rv.task_ref);
+    let rows: Vec<Row> = if rv.artifacts.is_empty() {
+        vec![Row::new(vec![Cell::from(Span::styled(
+            "no committed artifacts — nothing was produced (stated, not blank)",
+            theme::muted(),
+        ))])]
+    } else {
+        rv.artifacts
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let verdict = if a.verdicts.iter().all(|(_, v)| v == "passed") {
+                    if a.verdicts.is_empty() {
+                        Span::styled("unvalidated", theme::muted())
+                    } else {
+                        Span::styled("passed", theme::ok())
+                    }
+                } else {
+                    Span::styled("flagged", theme::bad())
+                };
+                let row = Row::new(vec![
+                    Cell::from(Span::styled(a.name.clone(), theme::accent())),
+                    Cell::from(format!("{}B", a.bytes)),
+                    Cell::from(verdict),
+                ]);
+                if i == rv.selected {
+                    row.style(theme::selected())
+                } else {
+                    row
+                }
+            })
+            .collect()
+    };
+    f.render_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Percentage(55),
+                Constraint::Percentage(20),
+                Constraint::Percentage(25),
+            ],
+        )
+        .header(header_row(vec!["artifact", "size", "validators"]))
+        .block(committed_block(&title)),
+        cols[0],
+    );
+
+    let Some(a) = rv.artifacts.get(rv.selected) else {
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                "select an artifact — none on this side (stated, not blank)",
+                theme::muted(),
+            ))
+            .block(live_block("content")),
+            cols[1],
+        );
+        return;
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(a.digest.clone(), theme::muted()),
+        Span::raw("  "),
+    ]));
+    for (validator, verdict) in &a.verdicts {
+        lines.push(Line::from(vec![
+            Span::styled(validator.clone(), theme::accent()),
+            Span::raw(" "),
+            theme::status_span(verdict),
+        ]));
+    }
+    lines.push(Line::from(""));
+    for l in &a.preview {
+        lines.push(Line::from(l.clone()));
+    }
+    if a.truncated {
+        lines.push(Line::from(Span::styled(
+            "… truncated — full bytes via `rein artifact cat <digest>` (stated)",
+            theme::warn(),
+        )));
+    }
+    let content_title = format!("{} — read back through the CAS", a.name);
+    f.render_widget(
+        Paragraph::new(lines)
+            .scroll((rv.scroll, 0))
+            .block(committed_block(&content_title)),
+        cols[1],
+    );
 }
 
 pub fn render_mission_control(f: &mut Frame<'_>, area: Rect, snap: &UiSnapshot, selected: usize) {

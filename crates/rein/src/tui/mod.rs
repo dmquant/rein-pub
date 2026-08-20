@@ -28,8 +28,14 @@ pub const KEYMAP: &[(&str, &str)] = &[
     ("3", "screen: recovery console"),
     ("4", "screen: compare"),
     ("g", "goto prefix (g then 1-4)"),
-    ("j", "select next"),
-    ("k", "select previous"),
+    ("j", "select next / scroll results"),
+    ("k", "select previous / scroll results"),
+    (
+        "Enter",
+        "open results — the attempt's artifacts, content inline",
+    ),
+    ("n", "results: next artifact"),
+    ("p", "results: previous artifact"),
     ("a", "mark compare A"),
     ("b", "mark compare B"),
     ("m", "recovery: resume-commit (confirm required)"),
@@ -72,6 +78,12 @@ pub struct App {
     pub mouse_capture: bool,
     pub toasts: Vec<(String, u8)>,
     pub quit: bool,
+    /// The results viewer, when open — artifacts + content for one attempt.
+    pub results: Option<data::ResultsView>,
+    /// Set by Enter; the event loop loads the view (it owns the store).
+    pub open_results: Option<String>,
+    /// Render tick for the activity spinner — advanced by the event loop.
+    pub frame: u64,
 }
 
 impl Default for App {
@@ -86,6 +98,9 @@ impl Default for App {
             mouse_capture: false,
             toasts: Vec::new(),
             quit: false,
+            results: None,
+            open_results: None,
+            frame: 0,
         }
     }
 }
@@ -102,10 +117,12 @@ impl App {
         self.toasts.retain(|t| t.1 > 0);
     }
 
-    /// Esc unwinds: popup → selection → quit (§10 keyboard model).
+    /// Esc unwinds: popup → results → selection → quit (§10 keyboard model).
     pub fn unwind(&mut self) {
         if self.popup.is_some() {
             self.popup = None;
+        } else if self.results.is_some() {
+            self.results = None;
         } else if self.selected != 0 {
             self.selected = 0;
         } else {
@@ -152,6 +169,29 @@ impl App {
             return None;
         }
 
+        // Results viewer open: navigate content, Esc backs out.
+        if let Some(rv) = &mut self.results {
+            match code {
+                KeyCode::Esc => self.results = None,
+                KeyCode::Char('q') => self.quit = true,
+                KeyCode::Char('j') | KeyCode::Down => rv.scroll = rv.scroll.saturating_add(1),
+                KeyCode::Char('k') | KeyCode::Up => rv.scroll = rv.scroll.saturating_sub(1),
+                KeyCode::Char('n') | KeyCode::Char('l') | KeyCode::Right => rv.next(),
+                KeyCode::Char('p') | KeyCode::Char('h') | KeyCode::Left => rv.prev(),
+                KeyCode::Char(c @ '1'..='4') => {
+                    self.results = None;
+                    self.screen = match c {
+                        '1' => Screen::MissionControl,
+                        '2' => Screen::LiveAttempt,
+                        '3' => Screen::Recovery,
+                        _ => Screen::Compare,
+                    };
+                }
+                _ => {}
+            }
+            return None;
+        }
+
         if self.goto_pending {
             self.goto_pending = false;
             match code {
@@ -181,8 +221,21 @@ impl App {
             KeyCode::Char('2') => self.screen = Screen::LiveAttempt,
             KeyCode::Char('3') => self.screen = Screen::Recovery,
             KeyCode::Char('4') => self.screen = Screen::Compare,
-            KeyCode::Char('j') | KeyCode::Down => self.selected = self.selected.saturating_add(1),
+            KeyCode::Char('j') | KeyCode::Down => {
+                let rows = match self.screen {
+                    Screen::Recovery => snap.queue.len(),
+                    _ => snap.attempts.len(),
+                };
+                self.selected = (self.selected + 1).min(rows.saturating_sub(1));
+            }
             KeyCode::Char('k') | KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Enter => {
+                if let Some(row) = snap.attempts.get(self.selected) {
+                    self.open_results = Some(row.attempt_id.clone());
+                } else {
+                    self.toast("no attempt selected — nothing to open");
+                }
+            }
             KeyCode::Char('a') => {
                 if let Some(row) = snap.attempts.get(self.selected) {
                     self.compare_a = AttemptId::parse(&row.attempt_id).ok();
@@ -244,14 +297,23 @@ pub fn render_app(
             ratatui::layout::Constraint::Length(1),
         ])
         .split(area);
-    screens::render_tabs(f, shell[0], app.screen, &snap.workspace);
-    screens::render_keybar(f, shell[2], app.screen);
+    let running = snap
+        .attempts
+        .iter()
+        .filter(|a| a.state != "Closed" && a.state != "unresolvable")
+        .count();
+    screens::render_tabs(f, shell[0], app.screen, &snap.workspace, running, app.frame);
+    screens::render_keybar(f, shell[2], app.screen, app.results.is_some());
     let body = shell[1];
-    match app.screen {
-        Screen::MissionControl => screens::render_mission_control(f, body, snap, app.selected),
-        Screen::LiveAttempt => screens::render_live_attempt(f, body, detail, publish_state),
-        Screen::Recovery => screens::render_recovery(f, body, snap, app.selected),
-        Screen::Compare => screens::render_compare(f, body, compare),
+    if let Some(rv) = &app.results {
+        screens::render_results(f, body, rv);
+    } else {
+        match app.screen {
+            Screen::MissionControl => screens::render_mission_control(f, body, snap, app.selected),
+            Screen::LiveAttempt => screens::render_live_attempt(f, body, detail, publish_state),
+            Screen::Recovery => screens::render_recovery(f, body, snap, app.selected),
+            Screen::Compare => screens::render_compare(f, body, compare),
+        }
     }
     match &app.popup {
         Some(Popup::Help) => screens::render_help(f, area),
@@ -331,12 +393,40 @@ pub fn run_tui(ws: &Workspace, store: &mut Store) -> std::io::Result<()> {
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
     let mut app = App::default();
+    // Outcome memory for change toasts: attempt → outcome-with-receipt.
+    let mut known: std::collections::HashMap<String, String> = Default::default();
+    let mut primed = false;
 
     let result = loop {
         let snap = match load_snapshot(ws, store) {
             Ok(s) => s,
             Err(e) => break Err(std::io::Error::other(e)),
         };
+        // Dynamics: a terminal outcome landing while you watch is announced.
+        for a in &snap.attempts {
+            if let Some((o, rcpt)) = &a.outcome {
+                let line = format!("{o} per {rcpt}");
+                match known.get(&a.attempt_id) {
+                    Some(prev) if prev == &line => {}
+                    Some(_) | None => {
+                        if primed {
+                            app.toast(format!("{}: {line}", a.attempt_id));
+                        }
+                        known.insert(a.attempt_id.clone(), line);
+                    }
+                }
+            }
+        }
+        primed = true;
+        if let Some(aid_str) = app.open_results.take() {
+            match AttemptId::parse(&aid_str)
+                .map_err(|e| e.to_string())
+                .and_then(|aid| data::attempt_results(ws, store, &aid))
+            {
+                Ok(rv) => app.results = Some(rv),
+                Err(e) => app.toast(format!("cannot open results: {e}")),
+            }
+        }
         let detail = snap
             .attempts
             .get(app.selected.min(snap.attempts.len().saturating_sub(1)))
@@ -371,6 +461,7 @@ pub fn run_tui(ws: &Workspace, store: &mut Store) -> std::io::Result<()> {
             }
         }
         app.tick();
+        app.frame = app.frame.wrapping_add(1);
         if app.quit {
             break Ok(());
         }

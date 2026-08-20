@@ -174,8 +174,17 @@ rein tui
 | **3 · Recovery Console** | Typed anomalies with diagnoses; three actions behind y/n confirms; no force-success key exists |
 | **4 · Compare** | Two attempts, differences classified: expected-environmental / nonsemantic-receipt / semantic-input / output / policy / unexplained |
 
-Keys: `?` help · `:` palette · `g`+`1–4` goto · `j/k` move · `a`/`b` mark a
-compare pair · `F2` mouse capture · `Esc` unwinds popup → selection → quit.
+**Enter opens the results viewer** from any attempt row: the attempt's
+committed artifacts with their validator verdicts and content inline —
+valuations and answers pretty-printed, read back through the CAS, scrollable
+(`j/k`), `n`/`p` across artifacts. The shell stays live: a tab bar and
+per-screen keybar frame every screen, an activity spinner counts running
+attempts, and a terminal outcome landing while you watch is announced as a
+toast naming its receipt.
+
+Keys: `?` help · `:` palette · `g`+`1–4` goto · `j/k` move · `Enter` open
+results · `a`/`b` mark a compare pair · `F2` mouse capture · `Esc` unwinds
+popup → results → selection → quit.
 Committed evidence panes are double-bordered `[committed]`; live reads are
 plain `[live]`. Empty panels state their emptiness — an empty panel and a
 failed one mean opposite things.

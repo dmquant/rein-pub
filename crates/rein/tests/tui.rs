@@ -336,3 +336,53 @@ fn m4__compare_screen__six_classes_and_digest_rows() {
     assert!(text.contains("nonsemantic-receipt"));
     assert!(text.contains("expected-environmental"));
 }
+
+/// Enter-to-results: from an attempt row straight to the committed content,
+/// read back through the CAS; Esc unwinds the viewer before selection.
+#[test]
+fn results_viewer_shows_committed_artifacts_inline() {
+    let (f, ids) = fixture_with_runs(&["fake:deterministic-a"]);
+    let snap = load_snapshot(&f.ws, &f.store).unwrap();
+    let rv = tui::data::attempt_results(&f.ws, &f.store, &ids[0]).unwrap();
+    assert!(!rv.artifacts.is_empty(), "the run committed artifacts");
+    let first = rv.artifacts[0].name.clone();
+    assert!(
+        !rv.artifacts[0].preview.is_empty(),
+        "content preview is loaded"
+    );
+
+    let mut app = App::default();
+    app.results = Some(rv);
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal
+        .draw(|fr| render_app(fr, &app, &snap, None, None, None))
+        .unwrap();
+    let text = buffer_text(&terminal);
+    assert!(text.contains("results —"), "viewer title present");
+    assert!(text.contains(&first), "artifact name listed");
+    assert!(text.contains("read back through the CAS"));
+    assert!(text.contains("sha256:"), "the digest is shown");
+
+    // Esc unwinds: popup → results → selection → quit.
+    app.selected = 3;
+    app.unwind();
+    assert!(app.results.is_none(), "results closed first");
+    assert_eq!(app.selected, 3, "selection untouched by that unwind");
+    assert!(!app.quit);
+}
+
+/// j/k stay inside the list — the cursor can never point past the data.
+#[test]
+fn selection_clamps_to_visible_rows() {
+    let (f, _ids) = fixture_with_runs(&["fake:deterministic-a"]);
+    let snap = load_snapshot(&f.ws, &f.store).unwrap();
+    let mut app = App::default();
+    for _ in 0..50 {
+        app.handle_key(crossterm::event::KeyCode::Char('j'), &snap);
+    }
+    assert_eq!(
+        app.selected,
+        snap.attempts.len() - 1,
+        "clamped to the last attempt"
+    );
+}
