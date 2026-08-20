@@ -180,6 +180,124 @@ pub(crate) fn estimate_growth_path(
     ))
 }
 
+/// Deep-research assembly: the model returns markdown + claims citing
+/// numbered sources; the ADAPTER maps every `[N]` onto the N-th pinned
+/// input's real digest and computes the coverage arithmetic. The model
+/// never writes a digest — it can only point at sources it was given.
+pub(crate) fn assemble_research_artifacts(
+    model: &Value,
+    inputs: &[InputEntry],
+) -> Result<(String, crate::schemas::Claims), String> {
+    let dossier = model
+        .get("dossier_md")
+        .and_then(Value::as_str)
+        .filter(|d| !d.trim().is_empty())
+        .ok_or("model output carries no dossier_md")?
+        .to_string();
+
+    #[derive(serde::Deserialize)]
+    struct ModelClaim {
+        #[serde(default)]
+        id: Option<String>,
+        text: String,
+        kind: crate::schemas::ClaimKind,
+        #[serde(default)]
+        about_time: Option<String>,
+        #[serde(default)]
+        evidence: Vec<u32>,
+        #[serde(default)]
+        falsifier: Option<String>,
+    }
+    let model_claims: Vec<ModelClaim> =
+        serde_json::from_value(model.get("claims").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("claims did not parse: {e}"))?;
+
+    // Every [N] in the dossier plus every evidence number, deduplicated.
+    let mut cited: std::collections::BTreeSet<u32> = Default::default();
+    let bytes = dossier.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            if let Some(end) = dossier[i + 1..].find(']').map(|e| i + 1 + e) {
+                if let Ok(n) = dossier[i + 1..end].parse::<u32>() {
+                    cited.insert(n);
+                }
+                i = end;
+            }
+        }
+        i += 1;
+    }
+    for c in &model_claims {
+        cited.extend(c.evidence.iter().copied());
+    }
+
+    let digest_of = |idx: u32| -> Option<(String, String)> {
+        let e = inputs.get((idx as usize).checked_sub(1)?)?;
+        Some((
+            e.artifact_ref.trim_start_matches("artifact:").to_string(),
+            e.note.clone(),
+        ))
+    };
+    // In-range citations resolve to real digests; out-of-range numbers get
+    // no entry — citation-closure then fails them honestly downstream.
+    let citations: Vec<crate::schemas::Citation> = cited
+        .iter()
+        .filter_map(|&n| {
+            digest_of(n).map(|(digest, note)| crate::schemas::Citation {
+                n,
+                source_digest: digest,
+                locator: note,
+            })
+        })
+        .collect();
+
+    let consumed_idx: std::collections::BTreeSet<u32> = cited
+        .iter()
+        .copied()
+        .filter(|&n| n >= 1 && (n as usize) <= inputs.len())
+        .collect();
+    let consumed: Vec<String> = consumed_idx
+        .iter()
+        .filter_map(|&n| digest_of(n).map(|(d, _)| format!("capture:{d}")))
+        .collect();
+    let withheld: Vec<crate::schemas::WithheldInput> = inputs
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !consumed_idx.contains(&((i + 1) as u32)))
+        .map(|(_, e)| crate::schemas::WithheldInput {
+            input_ref: format!("capture:{}", e.artifact_ref.trim_start_matches("artifact:")),
+            reason: "pinned as input but not cited by the hand".to_string(),
+        })
+        .collect();
+
+    let claims = crate::schemas::Claims {
+        schema: crate::schemas::CLAIMS_SCHEMA.to_string(),
+        claims: model_claims
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| crate::schemas::Claim {
+                id: c.id.unwrap_or_else(|| format!("c{}", i + 1)),
+                text: c.text,
+                kind: c.kind,
+                about_time: c
+                    .about_time
+                    .as_deref()
+                    .and_then(|t| rein_core::time::Timestamp::parse(t).ok()),
+                evidence: c.evidence,
+                falsifier: c.falsifier.filter(|f| !f.trim().is_empty()),
+            })
+            .collect(),
+        citations,
+        coverage: crate::schemas::ResearchCoverage {
+            eligible_inputs: inputs.len(),
+            consumed,
+            withheld,
+            hosts: Default::default(),
+        },
+    };
+    Ok((dossier, claims))
+}
+
 /// Operator-pinned growth override (a capture whose note contains "growth"):
 /// `{"g": [..5]}` exact path, or `{"growth": x}` flat; optional
 /// `discount_rate` / `terminal_growth`. Operator authority — no clamp.
@@ -815,7 +933,32 @@ impl RuntimeHand for AgyHand {
         })?;
         // Q&A mode (benchmark answers): free-text response, no JSON schema.
         let answer_mode = wants_answer(ctx);
-        let prompt = if answer_mode {
+        let research_mode = ctx
+            .contract
+            .required_artifacts
+            .iter()
+            .any(|a| a.name == "dossier.md");
+        let prompt = if research_mode {
+            let inputs = read_inputs_manifest(ctx.inputs_dir);
+            let mut sources = String::new();
+            for (i, e) in inputs.iter().enumerate() {
+                let body =
+                    std::fs::read_to_string(ctx.inputs_dir.join(&e.file)).unwrap_or_default();
+                let clipped: String = body.chars().take(4000).collect();
+                sources.push_str(&format!(
+                    "\n--- source [{}] ({})\n{}\n",
+                    i + 1,
+                    e.note,
+                    clipped
+                ));
+            }
+            format!(
+                "You are a deep-research hand inside the Rein harness. Do not run commands or use tools — work ONLY from the numbered sources below.\n\
+                 Produce raw JSON (no markdown fences): one object with keys `dossier_md` and `claims`.\n\
+                 `dossier_md`: a thorough analytical research dossier in markdown. Every factual statement drawn from a source MUST carry an inline citation like [1] or [3] referring to the numbered sources — a citation number you were not given is invalid. Never state anything after the task's knowledge cutoff as fact; label projections as forecasts.\n\
+                 `claims`: an array of the dossier's load-bearing claims, each {{\"text\":…, \"kind\":\"fact\"|\"forecast\"|\"scenario\", \"evidence\":[<source numbers>], \"falsifier\":\"<what observable outcome would refute this claim>\"}}. Facts need evidence; forecasts need falsifiers.\n{sources}"
+            )
+        } else if answer_mode {
             let (question, cutoff) = pinned_question(ctx).unwrap_or_else(|| {
                 (
                     "(no pinned question found in inputs)".to_string(),
@@ -835,7 +978,29 @@ impl RuntimeHand for AgyHand {
         cmd.arg("--model")
             .arg(&self.model)
             .args(["--output-format", "json"]);
-        if !answer_mode {
+        if research_mode {
+            cmd.arg("--json-schema").arg(
+                serde_json::to_string(&serde_json::json!({
+                    "type": "object",
+                    "required": ["dossier_md", "claims"],
+                    "properties": {
+                        "dossier_md": {"type": "string"},
+                        "claims": {"type": "array", "items": {
+                            "type": "object",
+                            "required": ["text", "kind", "evidence"],
+                            "properties": {
+                                "text": {"type": "string"},
+                                "kind": {"enum": ["fact", "forecast", "scenario"]},
+                                "about_time": {"type": "string"},
+                                "evidence": {"type": "array", "items": {"type": "integer"}},
+                                "falsifier": {"type": "string"}
+                            }
+                        }}
+                    }
+                }))
+                .expect("static schema"),
+            );
+        } else if !answer_mode {
             cmd.arg("--json-schema")
                 .arg(serde_json::to_string(&Self::output_schema()).expect("static schema"));
         }
@@ -910,7 +1075,29 @@ impl RuntimeHand for AgyHand {
             .map_or(!text.is_empty(), |s| s == "SUCCESS")
             && !text.is_empty();
         let mut claimed = BTreeMap::new();
-        if ok && answer_mode {
+        if ok && research_mode {
+            let inputs = read_inputs_manifest(ctx.inputs_dir);
+            match extract_trailing_json(&text)
+                .ok_or_else(|| "no JSON object in model response".to_string())
+                .and_then(|j| assemble_research_artifacts(&j, &inputs))
+            {
+                Ok((dossier, claims)) => {
+                    write_artifact(
+                        ctx.output_dir,
+                        "dossier.md",
+                        dossier.as_bytes(),
+                        &mut claimed,
+                    )?;
+                    let bytes = serde_json::to_vec_pretty(&claims).expect("serializes");
+                    write_artifact(ctx.output_dir, "claims.json", &bytes, &mut claimed)?;
+                }
+                Err(detail) => {
+                    // Nothing staged: the classifier records artifact_invalid
+                    // with the required artifacts absent — stated, not smoothed.
+                    let _ = detail;
+                }
+            }
+        } else if ok && answer_mode {
             // The response text IS the answer artifact.
             write_artifact(ctx.output_dir, "answer.md", text.as_bytes(), &mut claimed)?;
         } else if ok {
@@ -1316,5 +1503,66 @@ mod estimate_growth_tests {
         // One usable row is not a path.
         let j = serde_json::json!([{"date":"2028-01-01","netIncomeAvg": 5.0}]);
         assert!(estimate_growth_path(&[cap(j, "analyst-estimates")]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod research_tests {
+    use super::*;
+
+    fn inputs() -> Vec<InputEntry> {
+        (1..=3)
+            .map(|i| InputEntry {
+                file: format!("in{i}.json"),
+                artifact_ref: format!("artifact:sha256:d{i}"),
+                media_type: "application/json".into(),
+                note: format!("fmp:thing-{i}:NVDA"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn assemble_maps_citations_to_real_digests_and_counts_coverage() {
+        let model = serde_json::json!({
+            "dossier_md": "Revenue grew [1]; margins held [3]. Outlook is a forecast.",
+            "claims": [
+                {"text": "Revenue grew", "kind": "fact", "evidence": [1]},
+                {"text": "Growth continues", "kind": "forecast", "evidence": [3],
+                 "falsifier": "FY report shows decline"}
+            ]
+        });
+        let (dossier, claims) = assemble_research_artifacts(&model, &inputs()).unwrap();
+        assert!(dossier.contains("[1]"));
+        // Citations carry the pinned inputs' digests — never model-written.
+        let ns: Vec<u32> = claims.citations.iter().map(|c| c.n).collect();
+        assert_eq!(ns, vec![1, 3]);
+        assert_eq!(claims.citations[0].source_digest, "sha256:d1");
+        assert_eq!(claims.citations[1].source_digest, "sha256:d3");
+        // Coverage arithmetic: 2 consumed + 1 withheld = 3 eligible.
+        assert_eq!(claims.coverage.eligible_inputs, 3);
+        assert_eq!(claims.coverage.consumed.len(), 2);
+        assert_eq!(claims.coverage.withheld.len(), 1);
+        assert!(claims.coverage.withheld[0].reason.contains("not cited"));
+        assert_eq!(
+            claims.claims[1].falsifier.as_deref(),
+            Some("FY report shows decline")
+        );
+    }
+
+    #[test]
+    fn out_of_range_citation_gets_no_entry_so_closure_can_fail_it() {
+        let model = serde_json::json!({
+            "dossier_md": "A bold claim [9].",
+            "claims": [{"text": "x", "kind": "fact", "evidence": [9]}]
+        });
+        let (_, claims) = assemble_research_artifacts(&model, &inputs()).unwrap();
+        assert!(claims.citations.is_empty(), "no invented digest for [9]");
+        assert_eq!(claims.coverage.withheld.len(), 3, "nothing consumed");
+    }
+
+    #[test]
+    fn empty_dossier_is_a_refusal() {
+        let model = serde_json::json!({"dossier_md": "  ", "claims": []});
+        assert!(assemble_research_artifacts(&model, &inputs()).is_err());
     }
 }
