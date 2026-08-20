@@ -132,14 +132,53 @@ pub(crate) fn fcf_cagr(rows: &[(String, f64)]) -> Option<f64> {
     None
 }
 
-/// Linear fade from year-1 growth `g` to `terminal` by year 5 — the explicit
-/// window glides into the terminal assumption instead of cliff-dropping.
-pub(crate) fn fade_path(g: f64, terminal: f64) -> [f64; 5] {
-    let mut path = [0.0; 5];
-    for (i, p) in path.iter_mut().enumerate() {
-        *p = g + (terminal - g) * (i as f64) / 4.0;
+/// Forward growth from an analyst-estimates capture: consecutive YoY rates
+/// of `netIncomeAvg` (fallback `revenueAvg` — proxy stated), each clamped to
+/// [-10%, +40%], nearest-resampled onto the 5-year window. Forward market
+/// expectations with provider provenance — not this hand's opinion.
+pub(crate) fn estimate_growth_path(
+    captures: &[LoadedCapture],
+) -> Option<([f64; 5], String, String)> {
+    let c = captures
+        .iter()
+        .find(|c| c.note.contains("analyst-estimates"))?;
+    let arr = c.json.as_array()?;
+    let mut rows: Vec<(String, f64, &str)> = arr
+        .iter()
+        .filter_map(|r| {
+            let date = r.get("date")?.as_str()?.to_string();
+            match r.get("netIncomeAvg").and_then(Value::as_f64) {
+                Some(v) if v > 0.0 => Some((date, v, "netIncomeAvg")),
+                _ => match r.get("revenueAvg").and_then(Value::as_f64) {
+                    Some(v) if v > 0.0 => Some((date, v, "revenueAvg")),
+                    _ => None,
+                },
+            }
+        })
+        .collect();
+    if rows.len() < 2 {
+        return None;
     }
-    path
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    let metric = rows[0].2;
+    let rates: Vec<f64> = rows
+        .windows(2)
+        .map(|w| (w[1].1 / w[0].1 - 1.0).clamp(-0.10, 0.40))
+        .collect();
+    let k = rates.len();
+    let mut path = [0.0; 5];
+    for (i, slot) in path.iter_mut().enumerate() {
+        let idx = ((i as f64) * ((k - 1) as f64) / 4.0).round() as usize;
+        *slot = rates[idx.min(k - 1)];
+    }
+    Some((
+        path,
+        c.digest.clone(),
+        format!(
+            "analyst {metric} YoY over {} forward periods, clamped [-0.10, 0.40], resampled to 5y (FCF-growth proxy stated)",
+            rows.len()
+        ),
+    ))
 }
 
 /// Operator-pinned growth override (a capture whose note contains "growth"):
@@ -247,15 +286,17 @@ impl RuntimeHand for FinanceDeterministic {
                 [g; 5],
                 format!("operator-pinned flat growth {g:.4}/y (capture {digest})"),
             )
+        } else if let Some((p, digest, desc)) = estimate_growth_path(&captures) {
+            (p, format!("{desc} (capture {digest})"))
         } else if let Some((raw, digest)) = history
             .as_ref()
             .and_then(|(rows, d)| fcf_cagr(rows).map(|g| (g, d.clone())))
         {
             let clamped = raw.clamp(0.0, 0.25);
             (
-                fade_path(clamped, terminal),
+                [clamped; 5],
                 format!(
-                    "historical FCF CAGR {raw:.4}/y over {} captured periods (capture {digest}), clamped to {clamped:.4}, faded linearly to terminal {terminal:.4} by year 5",
+                    "historical FCF CAGR {raw:.4}/y over {} captured periods (capture {digest}), clamped to [0, 0.25] → {clamped:.4}, held flat across the 5-year window (two-stage: terminal {terminal:.4} applies only in the TV)",
                     history.as_ref().map(|(r, _)| r.len()).unwrap_or(0)
                 ),
             )
@@ -1223,14 +1264,6 @@ mod growth_tests {
     }
 
     #[test]
-    fn fade_path_glides_from_g_to_terminal() {
-        let p = fade_path(0.25, 0.025);
-        assert!((p[0] - 0.25).abs() < 1e-12);
-        assert!((p[4] - 0.025).abs() < 1e-12);
-        assert!(p.windows(2).all(|w| w[1] < w[0]), "monotone fade: {p:?}");
-    }
-
-    #[test]
     fn growth_pin_parses_flat_path_and_rate_overrides() {
         let v: serde_json::Value = serde_json::json!({
             "growth": 0.30, "discount_rate": 0.11, "terminal_growth": 0.03
@@ -1242,5 +1275,45 @@ mod growth_tests {
         let v: serde_json::Value = serde_json::json!({"g": [0.5, 0.4, 0.3, 0.2, 0.1]});
         let p: GrowthPin = serde_json::from_value(v).unwrap();
         assert_eq!(p.g.unwrap().len(), 5);
+    }
+}
+
+#[cfg(test)]
+mod estimate_growth_tests {
+    use super::*;
+
+    fn cap(json: serde_json::Value, note: &str) -> LoadedCapture {
+        LoadedCapture {
+            note: note.to_string(),
+            json,
+            digest: "sha256:test".to_string(),
+        }
+    }
+
+    #[test]
+    fn estimates_yoy_rates_resampled_and_clamped() {
+        let j = serde_json::json!([
+            {"date":"2031-06-30","netIncomeAvg": 334.0},
+            {"date":"2028-06-30","netIncomeAvg": 172.0},
+            {"date":"2029-06-30","netIncomeAvg": 209.0},
+            {"date":"2030-06-30","netIncomeAvg": 264.0},
+        ]);
+        let (path, _, desc) =
+            estimate_growth_path(&[cap(j, "fmp:analyst-estimates:MSFT")]).unwrap();
+        // Three rates ≈ 21.5%, 26.3%, 26.5% → resampled [r1,r1,r2,r3,r3].
+        assert!((path[0] - (209.0 / 172.0 - 1.0)).abs() < 1e-9);
+        assert!((path[4] - (334.0 / 264.0 - 1.0)).abs() < 1e-9);
+        assert!(desc.contains("netIncomeAvg"));
+        // A 90% jump clamps to 40%.
+        let j = serde_json::json!([
+            {"date":"2028-01-01","revenueAvg": 100.0},
+            {"date":"2029-01-01","revenueAvg": 190.0},
+        ]);
+        let (path, _, desc) = estimate_growth_path(&[cap(j, "analyst-estimates")]).unwrap();
+        assert!(path.iter().all(|g| (*g - 0.40).abs() < 1e-9));
+        assert!(desc.contains("revenueAvg"));
+        // One usable row is not a path.
+        let j = serde_json::json!([{"date":"2028-01-01","netIncomeAvg": 5.0}]);
+        assert!(estimate_growth_path(&[cap(j, "analyst-estimates")]).is_none());
     }
 }
