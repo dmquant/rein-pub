@@ -191,6 +191,7 @@ timeline
            : Growth assumptions moved to evidence, book re-valued
            : Verify & monitor task types run on live data
            : TUI redesign — semantic color, Enter-to-results
+           : First deep-research dossier — 6 claims, 6 falsifiers, 4/4 sources cited
            : Bilingual documentation, this story
 ```
 
@@ -296,6 +297,36 @@ bar and per-screen key bar, a live activity spinner — and the largest
 usability change: pressing **Enter** on any attempt opens its actual
 results in place, read back from the content-addressed store, so the
 screen can only display what was genuinely filed.
+
+**A deep-research dossier, end to end.** The research task type is the
+strictest contract in the harness: a markdown dossier whose every inline
+`[N]` must resolve — through a claims file — to the *bytes* of a real
+captured source ("a word in brackets is not a citation"), plus a claims
+register where facts carry evidence and forecasts carry falsifiers, and
+a coverage ledger where consumed + withheld sources must equal the
+sources given. The model hand learned this contract with one structural
+safeguard: **the model never writes a digest**. It cites numbered
+sources it was given; the adapter maps each number onto the pinned
+capture's real fingerprint, so a citation can only point at evidence
+that exists — an invented `[9]` gets no entry and fails validation
+honestly.
+
+The first real run — NVIDIA, over four pinned captures (quote,
+cash-flow statement, balance sheet, analyst estimates) — passed the
+whole gauntlet on its first attempt: a dossier citing all four sources
+(coverage **4 consumed + 0 withheld = 4 eligible**), six load-bearing
+claims — four facts, two forecasts — each with a genuine falsifier:
+
+> *"NVIDIA generated $102.72 billion in net cash from operating
+> activities and $96.68 billion in free cash flow [2]…"* — falsifier:
+> *restated or amended 10-K cash-flow statements showing different
+> figures.*
+>
+> *"Consensus forecasts project revenue reaching ~$563.6B (FY2028)…"* —
+> marked **forecast**, falsifier: *actual reported FY2028 revenue below
+> the projected consensus.*
+
+The evidence bundle for the run verifies, like every other.
 
 **And this document** — in two languages, with its diagrams.
 
