@@ -9,6 +9,7 @@
 
 pub mod data;
 pub mod screens;
+pub mod theme;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use data::{load_snapshot, ActionState, AttemptDetail, CompareReport, UiSnapshot};
@@ -234,11 +235,23 @@ pub fn render_app(
     compare: Option<&CompareReport>,
 ) {
     let area = f.size();
+    // Shell chrome: tab bar above, keybar below, the screen between.
+    let shell = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Length(1),
+            ratatui::layout::Constraint::Min(0),
+            ratatui::layout::Constraint::Length(1),
+        ])
+        .split(area);
+    screens::render_tabs(f, shell[0], app.screen, &snap.workspace);
+    screens::render_keybar(f, shell[2], app.screen);
+    let body = shell[1];
     match app.screen {
-        Screen::MissionControl => screens::render_mission_control(f, area, snap),
-        Screen::LiveAttempt => screens::render_live_attempt(f, area, detail, publish_state),
-        Screen::Recovery => screens::render_recovery(f, area, snap, app.selected),
-        Screen::Compare => screens::render_compare(f, area, compare),
+        Screen::MissionControl => screens::render_mission_control(f, body, snap, app.selected),
+        Screen::LiveAttempt => screens::render_live_attempt(f, body, detail, publish_state),
+        Screen::Recovery => screens::render_recovery(f, body, snap, app.selected),
+        Screen::Compare => screens::render_compare(f, body, compare),
     }
     match &app.popup {
         Some(Popup::Help) => screens::render_help(f, area),
@@ -249,7 +262,8 @@ pub fn render_app(
                 ratatui::widgets::Paragraph::new(format!(":{input}")).block(
                     ratatui::widgets::Block::default()
                         .borders(ratatui::widgets::Borders::ALL)
-                        .title("palette"),
+                        .border_style(theme::accent())
+                        .title(ratatui::text::Span::styled("palette", theme::heading())),
                 ),
                 popup,
             );
@@ -258,13 +272,31 @@ pub fn render_app(
             let popup = screens::centered(area, 64, 4);
             f.render_widget(ratatui::widgets::Clear, popup);
             f.render_widget(
-                ratatui::widgets::Paragraph::new(format!(
-                    "{action} on {attempt}?  y to confirm · n to dismiss\n(no semantic inputs change; no prior event is rewritten)"
-                ))
+                ratatui::widgets::Paragraph::new(vec![
+                    ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled(
+                            action.to_string(),
+                            theme::warn().add_modifier(ratatui::style::Modifier::BOLD),
+                        ),
+                        ratatui::text::Span::raw(format!(" on {attempt}?  ")),
+                        theme::key("y"),
+                        ratatui::text::Span::raw(" to confirm · "),
+                        theme::key("n"),
+                        ratatui::text::Span::raw(" to dismiss"),
+                    ]),
+                    ratatui::text::Line::from(ratatui::text::Span::styled(
+                        "(no semantic inputs change; no prior event is rewritten)",
+                        theme::muted(),
+                    )),
+                ])
                 .block(
                     ratatui::widgets::Block::default()
                         .borders(ratatui::widgets::Borders::ALL)
-                        .title("confirm — never a single keystroke"),
+                        .border_style(theme::warn())
+                        .title(ratatui::text::Span::styled(
+                            "confirm — never a single keystroke",
+                            theme::heading(),
+                        )),
                 ),
                 popup,
             );
