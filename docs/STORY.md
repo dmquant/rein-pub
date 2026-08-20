@@ -1,189 +1,327 @@
-# The Rein story — the full chronicle, in plain language
+# The Rein Story — a complete introduction
 
 **English** · [简体中文](STORY.zh-CN.md)
 
-*This page tells you what Rein is and everything that has happened to it,
-written for readers with no technical background. The technical reference
-is the [README](../README.md).*
+*A self-contained introduction to what Rein is, how it works, and what it
+has done so far — written to be readable without a technical background,
+and precise enough to be worth a professional's time. The terse reference
+is the [README](../README.md); the illustrated deep-dive in Chinese is
+[INTRO.zh-CN.md](INTRO.zh-CN.md).*
 
-## What is this thing?
+---
 
-Imagine you hire a brilliant but overconfident research assistant to
-analyze companies for you. The assistant is an AI. It works fast, writes
-beautifully — and sometimes it makes things up, quotes pages it never
-read, or announces "done!" while handing you an empty folder.
+## 1 · The problem: brilliant assistants, unaccountable work
 
-**Rein is the harness you put on that assistant.** The name means the
-reins on an animal whose strength you rent but do not own. Rein doesn't
-make the assistant smarter. It makes the assistant *accountable*:
+AI models are becoming genuinely useful research assistants — fast,
+tireless, and articulate. In financial research, however, the failure
+modes are exactly the ones ordinary software never had to guard against:
 
-- **Every number must carry a receipt.** Where it came from, when it was
-  fetched, from which provider. A number without a receipt cannot even be
-  written down — the forms simply have no box for it.
-- **Everything goes into a notebook that cannot be erased.** Every step,
-  every result, every mistake is written in ink. Not even the software's
-  own author can quietly rewrite yesterday's page.
-- **"I don't know" stays "I don't know."** When a run ends unclear, it is
-  recorded as *unknown* — and nothing anywhere can quietly turn an
-  unknown into a success. We checked: there is no such button, key, or
-  command. It was never built.
-- **Empty screens explain themselves.** "No results — nothing has run
-  yet" is an answer. A blank page is a bug.
-- **You can check everything later.** Any conclusion can be traced back,
-  step by step, to the exact pages and filings it rests on — and the
-  whole run can be replayed to prove nothing was tampered with.
+- **The empty success.** A process finishes with exit code 0 — the
+  universal "all good" — having produced *nothing*. A pipeline that
+  trusts exit codes files an empty folder as a win.
+- **The phantom citation.** A confident summary cites "[3]" — but no
+  page numbered 3 was ever fetched. The bracketed number *looks* like
+  evidence and is only typography.
+- **The invented number.** A valuation rests on a growth rate or beta
+  the model produced from nowhere. It is plausible, well-formatted, and
+  unfounded.
+- **The quietly rewritten past.** A "point-in-time" backtest asks a data
+  vendor for 2024 figures — and receives today's *restated* versions of
+  them. Nothing in the reply says so.
 
-## Day one — August 19, 2026
+None of these are fixed by making the model smarter, because none of
+them are intelligence failures. They are *accountability* failures. Rein
+— the word for the harness on an animal whose strength you rent but do
+not own — is a structural answer: a runtime that makes sloppy work
+**unrepresentable, or at least unmistakable**, regardless of how the
+model behaves.
 
-### Morning: a design arrives, and two polite objections
+## 2 · What Rein is
 
-Rein did not begin with code. It began with a hand-over: a finished
-design document — thirty-three numbered rules the software must never
-break, five construction stages each with its own acceptance test, and,
-unusually, **tear-down clauses**: pre-agreed conditions under which a
-feature must be ripped out again. (One example, still armed today: if
-the tool ever produces too many unexplained "unknowns" in a row, that
-part of it has failed and must go.)
+Rein is a single-binary command-line and terminal-UI tool. You declare a
+research **task** with an explicit output contract ("produce
+`valuation.json` and `assumptions.json`; they must survive these eleven
+validators"). A **hand** — a real AI model, a deterministic calculator,
+or a test fixture — executes one **attempt** inside a fence. Rein
+records everything, validates the artifacts, and classifies the outcome
+**from receipts only** — never from exit codes, never from the model's
+own account of itself.
 
-Before writing a single line, the builder read all thirty-three rules
-and filed **two objections** — small disagreements about edge cases,
-each with a stated reason — into the project's permanent record. Both
-were accepted. That set the tone: in this project, even the builder
-argues on the record.
+```mermaid
+flowchart LR
+    OP["You<br/>declare a task +<br/>output contract"] --> PACK["Context pack<br/>(inputs pinned &amp; hashed,<br/>then frozen)"]
+    PACK --> HAND["A hand runs<br/>one attempt<br/>(model / calculator / fixture)"]
+    HAND --> CAP["Everything captured:<br/>stdout, stderr, files"]
+    CAP --> CAS["Content-addressed store<br/>(bytes filed by hash)"]
+    CAS --> VAL["Validators<br/>(11 automated inspectors)"]
+    VAL --> CLS["Classifier reads receipts,<br/>never exit codes"]
+    CLS --> LEDGER["Append-only ledger<br/>(receipts, in ink)"]
+    LEDGER --> YOU["You: verify, replay,<br/>or challenge any claim"]
+```
 
-### Daytime: five stages, built in order
+Five properties carry the design:
 
-1. **The rulebook** — what counts as done, what counts as proof, the
-   exact vocabulary of outcomes. Also the day's least glamorous work:
-   persuading a deliberately old, stable compiler to accept a dozen
-   modern parts, one version pin at a time.
-2. **The unerasable notebook** — the ledger. The database itself
-   enforces "no edits, no deletions"; even the program that owns the
-   file cannot rewrite a page. Plus proof of repeatability: the same
-   sealed input, run through two different simple workers, must produce
-   byte-for-byte identical results — and a test proves it.
-3. **The finance toolkit** — fetching real market data with receipts
-   stamped on every row, and valuation arithmetic that must be
-   *re-computable from the assumptions file alone*. Eleven automated
-   inspectors check every piece of homework.
-4. **The rescue desk** — when a run gets stuck, a short menu of exactly
-   three safe actions. "Mark it as success anyway" is deliberately not
-   on the menu, and a test asserts the menu can never spell it.
-5. **The control room** — a four-screen terminal dashboard over the same
-   machinery.
+1. **Receipts, not claims.** Every number arrives stamped — value, unit,
+   as-of date, provider, retrieval time — or it cannot be written down
+   at all. Assumptions are legal inputs, but only with a stated
+   justification; a bare float is unrepresentable in the schemas.
+2. **An append-only ledger.** Every step of every attempt becomes a
+   receipt in a database that enforces — at the database layer — that
+   rows can never be updated or deleted. The program that owns the file
+   cannot rewrite its own history.
+3. **Honest classification.** Outcomes come from a closed vocabulary
+   (`success`, `partial_success`, `failure`, `artifact_invalid`,
+   `unknown`, …). `success` must be earned: every required artifact
+   committed *and independently read back*, every mandatory validator
+   passed. `unknown` never defaults to anything else, and no
+   force-success operation exists — not as a function, a command, or a
+   keybinding. Tests assert its absence.
+4. **Point-in-time discipline.** A task carries a knowledge cutoff.
+   Under a past cutoff, live data pulls are refused outright — because a
+   vendor's API serves the present, and no query parameter can un-restate
+   a restated figure.
+5. **Replayability.** The same frozen input pack through two
+   deterministic hands must produce byte-identical artifacts, and
+   `rein replay --strict` re-executes and re-hashes an attempt to prove
+   nothing drifted. A single tampered byte turns verification red.
 
-### Afternoon: the first real money numbers
+### Six questions, never one badge
 
-The same day, Rein valued its first real company — NVIDIA, from live
-market data. The simple, perfectly repeatable calculator said **$73.67**
-per share against a market price around $218 — and said *why* so low:
-its growth assumptions were deliberately timid, and every assumption was
-filed with its reason.
+Most dashboards compress a run into one green or red light. Rein refuses:
+it tracks six separate questions, each answered by its own evidence, and
+displays them side by side.
 
-Then a real AI model took the same test. It failed. **Three times.**
+| Question | Example answer |
+|---|---|
+| Did the process finish? | `exit 0` |
+| Are the artifacts there? | `missing: 2` |
+| What did validators say? | `0 verdicts recorded` |
+| What was the outcome? | `artifact_invalid (required_artifact_absent)` |
+| Is the task satisfied? | `unsatisfied` |
+| Was it accepted externally? | `not adjudicated here` |
 
-- First try: it wrapped its answer in decoration the strict reader
-  refused to accept. Recorded as a failure.
-- Second try: it attempted to run programs it had no permission to run.
-  Denied, recorded.
-- Third try: the arithmetic worked, but it forgot the required "what
-  would prove me wrong" line. Recorded as incomplete.
+The row above is a real pattern — a "green but empty" run. On one badge
+it would average into a lie. On six fields the contradiction is the
+first thing you see.
 
-No result was smoothed over; each failure sits in the notebook with its
-reason. On the **fourth** run the model's valuation — **$106.80** —
-passed all eleven inspections and became the first AI-authored valuation
-Rein ever accepted. One more catch from that afternoon: the live quote
-was missing the company's share count, so the fix derived it from two
-numbers the quote *did* carry — and even that workaround cites its
-receipt.
+## 3 · A worked example: valuing a company
 
-### Evening: a home, a face, a version
+This is the actual flow used in the demo book (`rein-book`), condensed.
 
-The code moved into a proper (then still private) repository, gained a
-README, automated checks that re-prove the whole system on every change,
-and a first release: **v0.1.0**. The evidence for the day's work —
-sealed bundles that verify themselves — was published to the project's
-coordination room *by the tool itself*.
+```sh
+# 1. Pull live market data — every row lands stamped in the store.
+rein data pull-equity NVDA --kinds quote,cashflow,balance,estimates
 
-## Day two — August 20, 2026
+# 2. Declare the task: a valuation over those exact pinned inputs.
+rein task add task:dcf-nvda@2 --plan plan:book@1 --type valuation \
+    --universe security:nvda \
+    --input capture:sha256:3f46cf… --input capture:sha256:196f72… \
+    --input capture:sha256:1c122d… --input capture:sha256:f9ce1f…
 
-### Morning: a public face
+# 3. Run it, and demand proof — exit 0 if and only if a verified
+#    task-satisfaction receipt exists.
+rein run task:dcf-nvda@2 --hand finance:deterministic \
+    --wait --require task-satisfied
+```
 
-Getting ready to open the doors: internal working papers moved out of
-the repository, a proper open-source license went in (use it under MIT
-or Apache-2.0, your choice), and the build was slimmed until it depends
-on nothing but publicly published parts — a fresh copy builds anywhere,
-for anyone. What ships is what a stranger can safely read.
+The output contract splits the deliverable in two, on purpose.
+`assumptions.json` carries every input with its provenance — here is one
+slot from the real artifact, abridged:
 
-### All day: the 400-question exam
+```json
+{
+  "name": "fcf_y2",
+  "value": 141650000000.0,
+  "unit": "ccy",
+  "basis": {
+    "kind": "assumption",
+    "justification": "year-2 FCF at growth 0.2128: analyst revenueAvg
+      endpoint CAGR 0.2128/y over 4 forward periods (capture sha256:f9ce1f…),
+      clamped [-0.10, 0.40], held flat across the window
+      (FCF-growth proxy stated)"
+  },
+  "status": "filled"
+}
+```
 
-Overnight into the afternoon, the AI assistant sat a public benchmark of
-400 real financial research questions. It answered **398** — and for two
-questions it produced nothing and was honestly marked failed rather than
-bluffing. A newly built grading tool then had a second AI mark every
-answer against a 0-to-4 rubric, resumably, with every grade's reasoning
-filed.
+Note what that one entry contains: the number, its derivation formula,
+the clamp applied to it, and the fingerprint of the analyst-estimates
+snapshot it came from. `valuation.json` then carries the arithmetic —
+and a validator recomputes the whole discounted-cash-flow from the
+assumptions file alone; if the two disagree, the run fails.
 
-The headline score: **99.4%**. And here Rein's honesty rules apply to
-its own report card: the grader is a cousin of the student and there is
-no official answer key, so the number is recorded as *an upper bound*,
-not a triumph. The grader did prove it was paying attention — it caught
-one answer that fell for a trick question built on a false premise, one
-that cited information from after its allowed knowledge date, and one
-that mixed up years.
+The current demo book, valued this way (August 20, 2026):
 
-### Afternoon: smarter valuations, on the record
+| Company | Rein per-share | Market | Growth input used |
+|---|---|---|---|
+| NVIDIA | $124.71 | $217.56 | analyst revenue CAGR, 21.3%/yr |
+| Microsoft | $288.11 | $484.31 | analyst revenue CAGR, 23.1%/yr |
+| Apple | $121.47 | $316.83 | analyst revenue CAGR, 8.5%/yr |
+| Alphabet | $149.40 | $344.72 | analyst revenue CAGR, 15.6%/yr |
+| Amazon | $10.14 | $265.84 | analyst revenue CAGR, 13.2%/yr |
 
-A valuation lives or dies by its growth assumptions, and the operator
-called the old flat guess **too timid to mean anything**. Growth now
-comes from evidence, in a strict order of trust: **your own stated
-view** (filed, with your name on it) beats **professional analysts'
-published forecasts** (fetched and stamped) beats **the company's own
-history** beats a clearly-labeled default. Getting there surfaced two
-genuine data traps — a company's cash-flow history can measure spending
-timing rather than growth, and far-future analyst averages sag simply
-because fewer analysts publish that far out — both now documented and
-defended against. The five companies in the demo book were re-valued
-under the new rules the same day (NVIDIA moved from $73.67 to
-**$124.71**, carrying analysts' 21.3%-a-year forecast, receipt
-attached).
+The gaps to market are the *honest* output of a deliberately simple
+model: trailing free-cash-flow base, a 9.5% discount rate, terminal
+growth of 2.5% — all stated, all overridable. (Amazon is the extreme
+case: its trailing FCF is depressed by heavy reinvestment, and a
+trailing-FCF DCF says so rather than flattering it.) Where does growth
+come from? A strict order of trust:
 
-The demo book also grew from one company to five, and two previously
-untested job types ran for real: a **verify** job, where a second worker
-challenges a finished valuation's claims (its honest verdict:
-"inconclusive — here is exactly what evidence would settle it"), and a
-**monitor** job, which watches data for silent revisions and knows the
-difference between *a new day's number arriving* (fine, that's just
-news) and *a past number quietly changing* (that's a restatement —
-shout). On its first real run it correctly stayed quiet.
+```mermaid
+flowchart TD
+    A["Operator-pinned view<br/>(your growth file, filed with<br/>provenance — highest authority)"] -->|absent| B["Analyst estimates capture<br/>(revenue endpoint CAGR,<br/>clamped −10%…+40%)"]
+    B -->|absent| C["Company's own FCF history<br/>(CAGR, clamped 0…25%)"]
+    C -->|absent| D["Stated default<br/>(labeled as such)"]
+```
 
-### Evening: a friendlier control room, and a scorecard
+Every year of the forecast records which rung of that ladder it came
+from, and the receipt behind it.
 
-The dashboard got a design pass. Colors now mean things: green is
-verified-good, red is failed, yellow is degraded, and *unknown* is a
-loud purple — because "unknown" is the state most tempting to ignore.
-A tab bar shows where you are; a key bar shows what you can press; a
-spinner counts work in progress; and results landing while you watch
-are announced with the receipt that backs them. Best of all: pressing
-**Enter** on any run opens its actual results right there — the
-valuation, the answer, the grades — read back from sealed storage, so
-the screen can only show what was really filed. The whole visual
-language was also published as a browsable design-system reference.
+## 4 · The chronicle
 
-### Night: this story
+```mermaid
+timeline
+    title Two days, in order
+    Aug 19 : Design handover — 33 invariants, 2 objections filed
+           : Five build stages, M0–M5, each with acceptance tests
+           : First real valuations — calculator $73.67, AI $106.80
+           : Repository, CI, release v0.1.0
+    Aug 20 : Public face — license in, internal papers out
+           : 400-question benchmark — 398 answered, judged, scored
+           : Growth assumptions moved to evidence, book re-valued
+           : Verify & monitor task types run on live data
+           : TUI redesign — semantic color, Enter-to-results
+           : Bilingual documentation, this story
+```
 
-The README learned Chinese, and this chronicle was written — in both
-languages, for readers like you.
+### Day one — August 19, 2026
 
-## The promises that never change
+**A design arrives, and two objections.** Rein began not with code but
+with a hand-over: a finished design of thirty-three numbered invariants
+— rules the software must never break — five build milestones each with
+acceptance tests, and *tear-down clauses*: pre-agreed conditions under
+which a feature must be removed again. (One is still armed: if the tool
+ever accumulates too many unexplained `unknown` outcomes in a trailing
+window, that subsystem is judged failed.) Before implementation, two
+objections to edge-case rules were argued and recorded in the project's
+permanent log, with reasons. Both were accepted. Every deviation from
+the design since has been recorded the same way.
 
-However the project grows, these stay fixed, and automated tests guard
-each one:
+**Five stages, one day.** The contracts and outcome vocabulary; the
+append-only ledger with byte-identical replay proven by test; the
+finance layer (stamped data pulls, recomputable valuation arithmetic,
+eleven validators); the recovery console — exactly three safe actions
+for stuck runs, with "mark as success" structurally absent; and the
+four-screen terminal dashboard.
 
-1. There is no "mark as success" button. Anywhere. Ever.
-2. "Unknown" never quietly becomes anything else.
-3. Every number carries its receipt; every status names its proof.
-4. The notebook is append-only — the past cannot be rewritten.
-5. Empty screens say why they are empty.
-6. Scores and grades never touch conclusions — a good report card
-   cannot promote a bad answer.
+**First real numbers — and three honest failures.** The deterministic
+calculator valued NVIDIA at **$73.67** against a ~$218 market price,
+stating exactly why it was conservative. Then a real AI model attempted
+the same task and failed three times in a row, each failure classified
+and filed: first for wrapping its output in formatting the strict parser
+rejects; then for attempting to run programs it had no permission to
+run; then for omitting the required falsifier — the "what would prove
+me wrong" clause every valuation must carry. Its fourth attempt —
+**$106.80** — passed all eleven validators and became the first
+AI-authored valuation Rein accepted. The afternoon also produced a
+characteristic small fix: the live quote lacked a share count, so one
+was derived from market cap ÷ price — *citing the same capture*, because
+even workarounds carry receipts.
+
+**By evening**: a repository with continuous integration re-proving the
+whole system on every change, a README, and release v0.1.0. The day's
+evidence bundles — self-verifying archives of every receipt and artifact
+— were published to the project's coordination room by the binary
+itself.
+
+### Day two — August 20, 2026
+
+**A public face.** Internal working papers moved out of the repository;
+a dual open-source license (MIT or Apache-2.0, at your option) moved in;
+and the build was reduced to depend on nothing but publicly published
+components — a fresh clone builds anywhere, for anyone.
+
+**The 400-question benchmark.** Overnight, the AI assistant answered a
+public benchmark of 400 financial research questions as 400 independent,
+receipted attempts — resumable at any point, which mattered across an
+eleven-hour run. It answered **398**; two questions produced empty
+output on every retry and stand in the ledger as honest failures rather
+than bluffs. A newly built grading command then had a judge model score
+every answer against a five-tier rubric, with each grade's reasoning
+filed:
+
+```mermaid
+flowchart LR
+    Q["400 questions<br/>(public JSONL)"] --> A["rein eval answers<br/>398 receipted attempts"]
+    A --> G["rein eval grade<br/>LLM judge, tiers 0–4,<br/>reasons filed"]
+    G --> S["rein eval financegym<br/>score + bootstrap CI"]
+```
+
+Headline: **99.4%** (95% CI 98.5–100). Rein's honesty rules apply to its
+own report card, so three qualifications are filed next to the number.
+*First*, the judge is from the same model family as the student and had
+no answer key — the score is an upper bound, not a result. *Second*, the
+official benchmark protocol grades against per-question rubric items
+that are deliberately withheld from participants; only maintainer-run
+grading produces leaderboard-comparable numbers. *Third*, the judge did
+demonstrate real discrimination: it caught an answer that accepted a
+trick question's false premise, one that cited information from after
+its knowledge cutoff, and one that transposed years — tiers 0, 0, and 2
+respectively, reasons on file.
+
+**Valuations moved to evidence.** The operator ruled the old flat growth
+guess too timid to mean anything, and growth became a provenance-ordered
+input (the ladder diagrammed above). Getting there surfaced two genuine
+data traps, now documented and defended: a company's cash-flow *history*
+can measure capital-spending timing rather than growth, and far-year
+analyst *averages* sag simply because fewer analysts publish that far
+out. The whole book was re-valued the same day.
+
+**Two new task types ran for real.** A **verify** task had a second,
+different worker challenge the AI's NVIDIA valuation; its verdict —
+`inconclusive`, with the exact evidence that would settle the claim
+attached — is what an honest challenger without new evidence *should*
+say. A **monitor** task watched two days of price data and correctly
+reported *zero* changed values: the new day's price is an inserted row,
+not a revision of the past. Its silence is the feature — it exists to
+shout only when history is quietly rewritten:
+
+```json
+{ "moved": [], "inserted": [ { "as_of": "2026-08-20", "value": 217.56 } ] }
+```
+
+**The control room grew up.** Semantic color (green verified-good, red
+failed, yellow degraded, `unknown` a deliberately loud purple), a tab
+bar and per-screen key bar, a live activity spinner — and the largest
+usability change: pressing **Enter** on any attempt opens its actual
+results in place, read back from the content-addressed store, so the
+screen can only display what was genuinely filed.
+
+**And this document** — in two languages, with its diagrams.
+
+## 5 · The invariants that do not move
+
+Six commitments hold regardless of how the project grows, each guarded
+by automated tests that fail if it is ever violated:
+
+1. **No force-success exists** — not a function, not a command, not a
+   key. The keymap is a closed list, and a test asserts nothing in it
+   can spell the forbidden action.
+2. **`unknown` never becomes anything else** without an explicit,
+   recorded human decision.
+3. **Every number carries a receipt; every status names its proof** —
+   down to the receipt identifier on the dashboard's outcome cells.
+4. **The ledger is append-only.** The past cannot be rewritten, by
+   anyone, including the software itself.
+5. **Absence is stated, never blank.** An empty panel says what its
+   emptiness means.
+6. **Scores never touch outcomes.** A benchmark grade, however good,
+   cannot promote an attempt's classification — evaluation reads
+   artifacts and writes nothing.
+
+---
+
+*To go deeper: the [README](../README.md) is the operational reference;
+[INVARIANTS.md](INVARIANTS.md) maps all thirty-three invariants to the
+code and tests that enforce them; [INTRO.zh-CN.md](INTRO.zh-CN.md) is an
+illustrated long-form introduction in Chinese.*
