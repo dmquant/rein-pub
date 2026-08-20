@@ -230,6 +230,10 @@ fails) · `citation-closure` (`[N]` must resolve to captured bytes; a word in
 brackets is not a citation) · `coverage-denominator` · `ops-discipline`.
 SKILL.md playbooks in `.rein/skills/` add validators to a task's contract at
 pack freeze — enforcement lives on the side the executor does not control.
+The library self-evolves under governance: `rein skill new <name>
+--from-attempt <id>` distills run evidence into a draft (provenance in
+`distilled_from`), `rein skill validate` gates it deterministically, and
+only `rein skill promote` — an operator act — puts a draft into force.
 
 **Configuration** — `configRoot` (default `~/.config/rein/`, override
 `--config-root` / `REIN_CONFIG_ROOT`) holds credentials and is **refused if

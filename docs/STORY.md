@@ -348,6 +348,16 @@ answers to its source." The fifth run passed everything. All four
 failed dossiers remain in the ledger with their reasons — the record of
 a rule being taught is itself evidence.
 
+**And the library learned to grow itself — under supervision.** A run's
+receipts can now be distilled into a *draft* playbook (`rein skill new`),
+a deterministic gate checks it (one-sentence description, only registered
+validators, a body that states how its own output could fail), and only
+the operator's explicit `promote` puts it in force. The first generated
+draft came from the book's own recorded caveat: a bank-valuation method
+distilled from the JPM attempt, correctly insisting that for banks debt
+is raw material and valuation belongs at the equity level. It sits in
+drafts, valid, awaiting promotion — which is the whole point.
+
 **And a library grew.** The playbooks stopped being code and became
 fourteen reviewable documents — how to value, verify, settle, monitor,
 answer, review an earnings print, map risks so they can actually be
