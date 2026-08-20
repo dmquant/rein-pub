@@ -6,3 +6,4 @@ members = ["crates/rein-core", "crates/rein-runtime", "crates/rein-finance", "cr
 version = "0.0.1"
 edition = "2021"
 publish = false
+license = "MIT OR Apache-2.0"

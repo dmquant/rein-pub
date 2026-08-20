@@ -4,6 +4,7 @@ description = "Rein M2 — the finance domain layer: stamped data tools, determi
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 rein-core = { path = "../rein-core" }

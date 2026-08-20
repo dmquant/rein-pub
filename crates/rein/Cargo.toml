@@ -4,6 +4,7 @@ description = "Rein — a financial research harness (CLI). Binary surface per d
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "rein"
