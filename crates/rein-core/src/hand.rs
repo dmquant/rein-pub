@@ -6,7 +6,7 @@
 //! `ModelIdentity` records model_id as **two fields, requested and served** —
 //! "a fallback string is not diffable and the diff is the alarm" (invariant 8,
 //! decision C5). Hands are constructed with internal retries disabled; the run
-//! record carries `attempts` (invariant 11 — schema here, gate-models path M2).
+//! record carries `attempts` (invariant 11 — schema here, adapter path M2).
 
 use crate::canon::Sha256Digest;
 use crate::context_pack::Budget;

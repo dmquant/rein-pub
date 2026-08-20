@@ -1511,7 +1511,7 @@ pub fn capture_list(ctx: &Ctx) -> CmdResult {
     Ok(CmdOutput::ok(Value::Array(rows)))
 }
 
-// ---- M3: evidence bundles, recovery console, propose-to-gate -----------------
+// ---- M3: evidence bundles, recovery console ---------------------------------
 
 pub fn evidence_bundle(ctx: &Ctx, attempt: &str, out: Option<&str>) -> CmdResult {
     let aid = attempt_id(attempt)?;
@@ -1590,134 +1590,6 @@ pub fn recover_queue(ctx: &Ctx) -> CmdResult {
         rein_runtime::recovery_queue::DEFAULT_STALE_AFTER_MS,
     )?;
     Ok(CmdOutput::ok(j(&queue)))
-}
-
-fn append_attempt_receipt(
-    store: &mut Store,
-    aid: &rein_core::ids::AttemptId,
-    body: rein_core::receipts::ReceiptBody,
-) -> Result<(), CliError> {
-    let mut log = store.load_attempt_log(aid)?;
-    let persisted = log.len();
-    let mut ids = store.id_gen()?;
-    log.append(&mut ids, aid, SystemClock.now(), body);
-    store.persist_receipts_from(&log, persisted)?;
-    store.save_id_gen(&ids)?;
-    Ok(())
-}
-
-pub fn propose_to_gate(ctx: &Ctx, attempt: &str, gate_project: Option<&str>) -> CmdResult {
-    let aid = attempt_id(attempt)?;
-    let (ws, mut store) = ctx.open()?;
-    let objects = rein_propose::build_capsule_objects(&ws, &store, &aid)
-        .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
-    let base = ws.tmp().join(format!("propose-{}", aid.as_str()));
-    let _ = std::fs::remove_dir_all(&base);
-    let dir = rein_propose::write_capsule_dir(&base, &objects, &SystemClock.now().canonical())
-        .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
-    let driver = rein_propose::GateDriver::discover(gate_project.map(std::path::PathBuf::from))
-        .map_err(|e| CliError::new(ExitCode::ProviderUnresolved, e.to_string()))?;
-    let prefix = format!("obj-rein-{}", aid.as_str());
-    let (import_output, delta_id) = driver
-        .import(&dir, &prefix)
-        .map_err(|e| CliError::new(ExitCode::Transport, e.to_string()))?;
-
-    append_attempt_receipt(
-        &mut store,
-        &aid,
-        rein_core::receipts::ReceiptBody::Admission {
-            source: "gate".to_string(),
-            state: rein_core::receipts::AdmissionState::AtGate,
-            detail: serde_json::to_string(&json!({
-                "delta_id": delta_id,
-                "capsule_objects": objects.len(),
-                "import_output": import_output.trim(),
-                "poll_method": "gate delta list (text), delta id recorded at import via gate diff --json",
-            }))
-            .unwrap_or_default(),
-        },
-    )?;
-    Ok(CmdOutput::ok(kv(&[
-        ("attempt", s(aid.as_str())),
-        ("objects", json!(objects.len())),
-        ("delta_id", delta_id.map(s).unwrap_or(Value::Null)),
-        ("import_output", s(import_output.trim().to_string())),
-        ("state", s("at-gate")),
-    ]))
-    .next(format!("rein propose status {}", aid.as_str())))
-}
-
-pub fn propose_status(ctx: &Ctx, attempt: &str, gate_project: Option<&str>) -> CmdResult {
-    let aid = attempt_id(attempt)?;
-    let (_, mut store) = ctx.open()?;
-    let log = store.load_attempt_log(&aid)?;
-    // The latest admission receipt carries the delta id.
-    let mut delta_id = None;
-    let mut findings: Vec<Value> = Vec::new();
-    for e in log.for_attempt(&aid) {
-        match &e.body {
-            rein_core::receipts::ReceiptBody::Admission { detail, .. } => {
-                if let Ok(v) = serde_json::from_str::<Value>(detail) {
-                    if let Some(d) = v["delta_id"].as_str() {
-                        delta_id = Some(d.to_string());
-                    }
-                }
-            }
-            rein_core::receipts::ReceiptBody::Validation {
-                artifact_name,
-                validator,
-                verdict,
-                ..
-            } => {
-                // Invariant 33: findings ride along with the status, always.
-                if !matches!(verdict, rein_core::receipts::ValidatorVerdict::Passed) {
-                    findings.push(json!({
-                        "artifact": artifact_name,
-                        "validator": validator.to_string(),
-                        "verdict": j(verdict),
-                    }));
-                }
-            }
-            _ => {}
-        }
-    }
-    let Some(delta_id) = delta_id else {
-        return Err(CliError::new(
-            ExitCode::NotFound,
-            "no admission receipt with a delta id — run `rein propose --to-gate` first",
-        ));
-    };
-    let driver = rein_propose::GateDriver::discover(gate_project.map(std::path::PathBuf::from))
-        .map_err(|e| CliError::new(ExitCode::ProviderUnresolved, e.to_string()))?;
-    let raw_state = driver
-        .delta_state(&delta_id)
-        .map_err(|e| CliError::new(ExitCode::Transport, e.to_string()))?;
-    let admission = match raw_state.as_str() {
-        "open" | "partially-committed" => rein_core::receipts::AdmissionState::AtGate,
-        "closed" => rein_core::receipts::AdmissionState::Admitted,
-        "discarded" => rein_core::receipts::AdmissionState::Rejected,
-        _ => rein_core::receipts::AdmissionState::Held,
-    };
-    append_attempt_receipt(
-        &mut store,
-        &aid,
-        rein_core::receipts::ReceiptBody::Admission {
-            source: "gate".to_string(),
-            state: admission.clone(),
-            detail: serde_json::to_string(&json!({
-                "delta_id": delta_id,
-                "delta_state": raw_state,
-            }))
-            .unwrap_or_default(),
-        },
-    )?;
-    Ok(CmdOutput::ok(kv(&[
-        ("attempt", s(aid.as_str())),
-        ("delta_id", s(delta_id)),
-        ("delta_state", s(raw_state)),
-        ("admission", j(&admission)),
-        ("findings_reported", Value::Array(findings)),
-    ])))
 }
 
 // ---- M4: the TUI ------------------------------------------------------------

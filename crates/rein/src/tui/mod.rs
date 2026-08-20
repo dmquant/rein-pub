@@ -1,7 +1,7 @@
 //! The TUI (§10): four screens over the same domain core the CLI uses —
 //! never parsing CLI output, never shelling out for domain operations.
 //!
-//! Keyboard model (§10 / PDF §37.1 + Gate's earned additions): `?` help,
+//! Keyboard model (§10 / PDF §37.1 + earned additions from a sibling TUI): `?` help,
 //! `:` palette, `g` goto, vim motions, F2 mouse-capture toggle, Esc unwind
 //! (popup → selection → quit), toasts that decay. Destructive or
 //! authority-changing actions always confirm — and there is no force-success
@@ -230,13 +230,13 @@ pub fn render_app(
     app: &App,
     snap: &UiSnapshot,
     detail: Option<&AttemptDetail>,
-    propose_state: Option<&ActionState>,
+    publish_state: Option<&ActionState>,
     compare: Option<&CompareReport>,
 ) {
     let area = f.size();
     match app.screen {
         Screen::MissionControl => screens::render_mission_control(f, area, snap),
-        Screen::LiveAttempt => screens::render_live_attempt(f, area, detail, propose_state),
+        Screen::LiveAttempt => screens::render_live_attempt(f, area, detail, publish_state),
         Screen::Recovery => screens::render_recovery(f, area, snap, app.selected),
         Screen::Compare => screens::render_compare(f, area, compare),
     }
@@ -310,7 +310,7 @@ pub fn run_tui(ws: &Workspace, store: &mut Store) -> std::io::Result<()> {
             .get(app.selected.min(snap.attempts.len().saturating_sub(1)))
             .and_then(|row| AttemptId::parse(&row.attempt_id).ok())
             .and_then(|aid| data::attempt_detail(store, &aid).ok());
-        let propose_state = detail.as_ref().map(data::propose_action_state);
+        let publish_state = detail.as_ref().map(data::publish_action_state);
         let compare = match (&app.compare_a, &app.compare_b) {
             (Some(a), Some(b)) => data::compare_attempts(store, a, b).ok(),
             _ => None,
@@ -321,7 +321,7 @@ pub fn run_tui(ws: &Workspace, store: &mut Store) -> std::io::Result<()> {
                 &app,
                 &snap,
                 detail.as_ref(),
-                propose_state.as_ref(),
+                publish_state.as_ref(),
                 compare.as_ref(),
             )
         })?;

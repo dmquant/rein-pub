@@ -21,7 +21,7 @@ Status: **all 33 rows green** (2026-08-19, M0–M5 landed in sequence).
 | 8 | Exact pins or declared method; model_id = requested + served | **M0** ✅ | `pins::ProviderPin`, `hand::ModelIdentity` | `inv08__pins_providerpin__…` |
 | 9 | Resolvable attempt join key on every proposed fact | **M0** ✅ | `selection::resolve_attempt_ref` | `inv09__selection_resolve_attempt_ref__…` |
 | 10 | Budgets = max_steps + per_step_timeout_ms | **M2** ✅ | `hand::per_step_breach` + engine Budget receipt | `inv10__engine_budget__…` (m2_acceptance) |
-| 11 | Hand-internal retries disabled; `attempts` recorded | **M2** ✅ | `hands::AgyHand` (single-shot by construction; attempts recorded) | `inv11_26__agy_hand__…` (m2_acceptance). Deviation recorded: rein ships its own agy adapter instead of consuming gate-models (whose retry loops violate this invariant) |
+| 11 | Hand-internal retries disabled; `attempts` recorded | **M2** ✅ | `hands::AgyHand` (single-shot by construction; attempts recorded) | `inv11_26__agy_hand__…` (m2_acceptance). Deviation recorded: rein ships its own agy adapter instead of consuming the estate model crate (whose retry loops violate this invariant) |
 | 12 | Every stage checkpoints; `--resume`; nothing non-resumable | **M2** ✅ | per-phase receipt persistence + `selection::task_satisfied`-driven plan sweep | `inv12__plan_sweep_resume__…` (m2_acceptance) |
 | 13 | PIT: past-cutoff epochs read own-CAS only; eval/production modes | **M2** ✅ | `capture::ensure_live_permitted`, `capture::capture_admissible` | `inv13__capture_ensure_live_permitted__…` (m2_acceptance) |
 | 14 | Temporal leakage is a validator | **M2** ✅ | validator `fact-vs-forecast@1` | `inv14__fact_vs_forecast__…` (m2_acceptance) |
@@ -42,8 +42,8 @@ Status: **all 33 rows green** (2026-08-19, M0–M5 landed in sequence).
 | 29 | Grants explicit, expiring, non-transitive; TOFU | **M2** ✅ | `workspace::SecretBroker::env_for` (absence is never permission) + `entities::CapabilityGrant` shape | `inv29__secretbroker_env_for__…` |
 | 30 | Incremental UTF-8 decode retaining partial sequences | **M0** ✅ | `capture::Utf8StreamDecoder` | `inv30__capture_utf8streamdecoder__…` |
 | 31 | Absence is stated, never blank | **M4** ✅ | the screens' stated-absence rows (`tui::screens`) | `inv31__screens__…` (headless render, rein/tests/tui.rs) |
-| 32 | Disabled actions explain; statuses name their receipt | **M4** ✅ | `tui::data::propose_action_state`; outcome cells carry `per rcpt_…` | `inv32__action_gating__…` (headless render) |
-| 33 | Findings a gate no longer holds are still reported | **M3** ✅ (pane face owed M4) | `rein_propose::build_capsule_objects` (findings ride every payload) + `propose status` findings_reported | `inv9_33__capsule_objects__…` (rein-propose) |
+| 32 | Disabled actions explain; statuses name their receipt | **M4** ✅ | `tui::data::publish_action_state`; outcome cells carry `per rcpt_…` | `inv32__action_gating__…` (headless render) |
+| 33 | Findings a gate no longer holds are still reported | **M3** ✅ | `evidence::bundle_attempt` — every receipt rides the bundle, failed validations included; nothing is memory-holed | `m3__bundle_verifies_deterministically_and_catches_tampering` (rein-runtime) |
 
 Accepted resolutions the code embodies (recorded in the room before
 implementation):

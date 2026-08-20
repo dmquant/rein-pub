@@ -2,9 +2,9 @@
 //! native-tls connector — the pattern proven in the estate. The API key is
 //! never inlined in errors; every surfaced error is redacted.
 //!
-//! Deviation from design §11 ("gate-market consumed"), recorded in the room:
-//! rein needs statements/estimates endpoints gate-market does not wrap, and
-//! linking it drags a full tokio build through gate-protocol into a blocking
+//! Deviation from design §11 (consume the estate market crate), recorded in
+//! the room: rein needs statements/estimates endpoints it does not wrap, and
+//! linking it drags a full tokio build through its protocol stack into a blocking
 //! client. The consumed *lesson* — provider-time stamping, key redaction,
 //! `with_root` fixture override — is kept intact.
 

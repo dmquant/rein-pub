@@ -1,7 +1,7 @@
-//! Frame discipline (§4 ▲, after gate-protocol's ERIR comparability): every
+//! Frame discipline (§4 ▲, after a sibling estate's ERIR comparability): every
 //! compute input carries its frame axes — currency, period/calendarization,
 //! accounting basis, unit scale. Comparisons refuse across disagreeing axes;
-//! only axes present on **both** sides can disagree (the gate lesson: an
+//! only axes present on **both** sides can disagree (the estate lesson: an
 //! absent axis is unknown, not wildcard-compatible-with-everything… but also
 //! not provably incomparable).
 

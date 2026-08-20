@@ -129,11 +129,6 @@ enum Cmd {
     },
     /// The recovery queue across the workspace
     Recover,
-    /// Propose to Gate's gate through the installed `gate` binary (§9)
-    Propose {
-        #[command(subcommand)]
-        cmd: ProposeCmd,
-    },
     /// Evaluation, two-track (§4): financegym research scoring + internal
     /// settled-material hand ranking. Scores never touch TerminalOutcome.
     Eval {
@@ -197,23 +192,6 @@ enum EvidenceCmd {
         attempt: String,
         #[arg(long)]
         out: Option<String>,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum ProposeCmd {
-    /// Write a capsule from an attempt and drive `gate import capsule`
-    ToGate {
-        attempt: String,
-        /// The gate project directory (defaults to $HOME)
-        #[arg(long)]
-        gate_project: Option<String>,
-    },
-    /// Poll the gate and append an admission receipt
-    Status {
-        attempt: String,
-        #[arg(long)]
-        gate_project: Option<String>,
     },
 }
 
@@ -616,16 +594,6 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
                 offset,
                 out,
             } => cmds::eval_answers(ctx, file.as_deref(), hand, *limit, *offset, out),
-        },
-        Cmd::Propose { cmd } => match cmd {
-            ProposeCmd::ToGate {
-                attempt,
-                gate_project,
-            } => cmds::propose_to_gate(ctx, attempt, gate_project.as_deref()),
-            ProposeCmd::Status {
-                attempt,
-                gate_project,
-            } => cmds::propose_status(ctx, attempt, gate_project.as_deref()),
         },
     }
 }

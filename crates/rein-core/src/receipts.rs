@@ -99,7 +99,7 @@ pub enum ReceiptBody {
         scope: String,
         note: String,
     },
-    /// External adjudication state, recorded from polling Gate's gate (§9
+    /// External adjudication state, recorded from polling a review gate (§9
     /// `rein propose status`) — what makes invariant 1's external axes
     /// renderable as *recorded state*, never a blank.
     Admission {

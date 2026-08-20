@@ -1,5 +1,5 @@
-//! M4 acceptance (§13): headless render tests on buffers — the gate-tui
-//! pattern. The Live-Attempt panel shows *disagreeing axes* for exit0-empty
+//! M4 acceptance (§13): headless render tests on buffers — a pattern
+//! earned in a sibling TUI. The Live-Attempt panel shows *disagreeing axes* for exit0-empty
 //! (process: exit 0 / artifact: absent / outcome: artifact_invalid), and
 //! invariants 31–32 land: absence is stated, never blank; every disabled
 //! action explains itself and every status names its receipt.
@@ -22,7 +22,7 @@ use rein_runtime::workspace::{SecretBroker, Workspace};
 mod tui;
 
 use tui::data::{
-    attempt_detail, compare_attempts, load_snapshot, propose_action_state, ActionState, DiffClass,
+    attempt_detail, compare_attempts, load_snapshot, publish_action_state, ActionState, DiffClass,
 };
 use tui::{render_app, App, Screen, KEYMAP};
 
@@ -158,7 +158,7 @@ fn m4_acceptance__live_attempt_shows_disagreeing_axes_for_exit0_empty() {
     let (f, ids) = fixture_with_runs(&["fake:exit0-empty"]);
     let snap = load_snapshot(&f.ws, &f.store).unwrap();
     let detail = attempt_detail(&f.store, &ids[0]).unwrap();
-    let action = propose_action_state(&detail);
+    let action = publish_action_state(&detail);
 
     let mut terminal = Terminal::new(TestBackend::new(120, 34)).unwrap();
     let mut app = App::default();
@@ -232,12 +232,12 @@ fn inv31__screens__absence_is_stated_never_blank() {
 }
 
 /// Invariant 32 — every disabled action explains itself; every status names
-/// the receipt it derives from. Symbol: `tui::data::propose_action_state`.
+/// the receipt it derives from. Symbol: `tui::data::publish_action_state`.
 #[test]
 fn inv32__action_gating__disabled_actions_explain_and_statuses_name_receipts() {
     let (f, ids) = fixture_with_runs(&["fake:exit0-empty"]);
     let detail = attempt_detail(&f.store, &ids[0]).unwrap();
-    match propose_action_state(&detail) {
+    match publish_action_state(&detail) {
         ActionState::Disabled { explain } => {
             assert!(explain.contains("ArtifactInvalid"), "{explain}");
             assert!(
@@ -245,7 +245,7 @@ fn inv32__action_gating__disabled_actions_explain_and_statuses_name_receipts() {
                 "the reason is named"
             );
         }
-        ActionState::Enabled => panic!("a failed attempt must not be proposable"),
+        ActionState::Enabled => panic!("a failed attempt must not be publishable"),
     }
 
     // Statuses name receipts: mission control's outcome column carries
@@ -259,11 +259,11 @@ fn inv32__action_gating__disabled_actions_explain_and_statuses_name_receipts() {
     let text = buffer_text(&terminal);
     assert!(text.contains("per rcpt_"), "status names its receipt");
 
-    // A successful attempt: propose enabled.
+    // A successful attempt: publish enabled.
     let (f2, ids2) = fixture_with_runs(&["fake:deterministic-a"]);
     let detail2 = attempt_detail(&f2.store, &ids2[0]).unwrap();
     assert!(matches!(
-        propose_action_state(&detail2),
+        publish_action_state(&detail2),
         ActionState::Enabled
     ));
 }

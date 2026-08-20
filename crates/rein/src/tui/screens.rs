@@ -156,7 +156,7 @@ pub fn render_live_attempt(
     f: &mut Frame<'_>,
     area: Rect,
     detail: Option<&AttemptDetail>,
-    propose_state: Option<&ActionState>,
+    publish_state: Option<&ActionState>,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -251,12 +251,12 @@ pub fn render_live_attempt(
     );
 
     // Action bar: disabled actions explain themselves (invariant 32).
-    let action_line = match propose_state {
-        Some(ActionState::Enabled) => "p propose-to-gate [enabled]".to_string(),
+    let action_line = match publish_state {
+        Some(ActionState::Enabled) => "p publish-evidence [enabled]".to_string(),
         Some(ActionState::Disabled { explain }) => {
-            format!("p propose-to-gate [disabled] — {explain}")
+            format!("p publish-evidence [disabled] — {explain}")
         }
-        None => "p propose-to-gate [disabled] — no attempt selected".to_string(),
+        None => "p publish-evidence [disabled] — no attempt selected".to_string(),
     };
     f.render_widget(
         Paragraph::new(action_line).block(live_block("actions")),

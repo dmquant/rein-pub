@@ -1,6 +1,6 @@
 # The dependency fence and the invariant manifest, as literal CI: every push
-# re-proves the standalone build — no gate-* crates in the graph, no clock in
-# the judgment path, all 93 tests. `--locked` holds the committed resolution
+# re-proves the standalone build — registry-only dependency graph, no clock in
+# the judgment path, the full suite. `--locked` holds the committed resolution
 # (the toolchain floor is 1.82; several transitive deps pin below their
 # edition2024 releases on purpose).
 name: ci
@@ -25,6 +25,4 @@ jobs:
       - name: clippy
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: tests
-        # The gate-binary crossing test skips with a stated reason here (no
-        # `gate` on the runner) — by design; it runs wherever gate exists.
         run: cargo test --locked

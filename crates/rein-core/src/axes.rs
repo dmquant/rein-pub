@@ -31,7 +31,7 @@ impl<T: std::fmt::Display> std::fmt::Display for Axis<T> {
     }
 }
 
-/// An external axis (Gate's gate; federation admission): Rein renders the
+/// An external axis (a review gate; federation admission): Rein renders the
 /// recorded admission state, else "not adjudicated here" — never a blank.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

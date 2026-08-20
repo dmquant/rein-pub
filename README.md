@@ -231,14 +231,6 @@ deterministic core, and each refuses with a stated reason when unconfigured.
   disabled and its self-reports treated as evidence only.
 - **Web research** — SearXNG for search, capped captures per host
   (syndication is not corroboration).
-- **A review gate** — if you run Gate (a local research-graph terminal with
-  a human review gate), `rein propose to-gate <attempt>`
-  writes a capsule in Gate's wire format and drives the installed `gate`
-  binary; the import lands as one open delta at Gate's gate (never
-  auto-admitted), and `rein propose status` polls it into an admission
-  receipt. Rein has **no commit verb into Gate, ever**; the wire types are
-  mirrored natively so the build stays standalone, and the integration test
-  exercises the real binary wherever it is installed.
 - **A coordination hub** — `rein evidence publish <attempt> --room <id>`
   posts a bundle summary (with its sha256) to an AGORA room, using a party
   key and hub URL from configRoot (`agora_hub`, or `--hub`; no endpoint is
@@ -252,8 +244,8 @@ A detailed introduction in Simplified Chinese, with diagrams, is at
 sha256 `e685d399…97cb0`) that is not shipped here; its enforceable surface
 is `docs/INVARIANTS.md`, which maps all **33 invariants → production symbol
 → reddening test — 33/33 green**. Deviations from the design text (two objections, the
-hand-binding hash exclusion, the native wire mirror) are recorded decisions
-with their reasons, and reversing any of them silently reddens tests.
+hand-binding hash exclusion) are recorded decisions with their reasons, and
+reversing any of them silently reddens tests.
 Deliberately unbuilt, each with a stated reinstatement condition: lease
 service, multi-tenant/remote execution, container sandbox tiers, plugin PKI,
 `backtest`.
@@ -261,7 +253,7 @@ service, multi-tenant/remote execution, container sandbox tiers, plugin PKI,
 Crates: `rein-core` (pure contracts — no clock, no randomness, no I/O) ·
 `rein-runtime` (ledger, CAS, pipeline, replay, recovery, evidence) ·
 `rein-finance` (data/compute tools, validators, skills, hands, eval) ·
-`rein-propose` (the Gate crossing) · `rein` (CLI + TUI).
+`rein` (CLI + TUI).
 
 ## License
 

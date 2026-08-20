@@ -937,7 +937,6 @@ dependencies = [
  "ratatui",
  "rein-core",
  "rein-finance",
- "rein-propose",
  "rein-runtime",
  "serde",
  "serde_json",
@@ -970,19 +969,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "ureq",
-]
-
-[[package]]
-name = "rein-propose"
-version = "0.0.1"
-dependencies = [
- "rein-core",
- "rein-finance",
- "rein-runtime",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]

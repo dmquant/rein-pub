@@ -359,9 +359,9 @@ pub enum ActionState {
     Disabled { explain: String },
 }
 
-/// Can this attempt be proposed to Gate? Disabled states name the receipt the
-/// judgment derives from.
-pub fn propose_action_state(detail: &AttemptDetail) -> ActionState {
+/// Can this attempt's evidence be published (bundle → coordination room)?
+/// Disabled states name the receipt the judgment derives from.
+pub fn publish_action_state(detail: &AttemptDetail) -> ActionState {
     match &detail.axes.outcome {
         rein_core::axes::Axis::Recorded(o)
             if o.outcome == rein_core::outcome::TerminalOutcome::Success =>
@@ -370,12 +370,12 @@ pub fn propose_action_state(detail: &AttemptDetail) -> ActionState {
         }
         rein_core::axes::Axis::Recorded(o) => ActionState::Disabled {
             explain: format!(
-                "propose disabled: terminal outcome is {:?} ({}) — a success terminal receipt is required",
+                "publish disabled: terminal outcome is {:?} ({}) — a success terminal receipt is required",
                 o.outcome, o.reason.0
             ),
         },
         rein_core::axes::Axis::NotYetRecorded => ActionState::Disabled {
-            explain: "propose disabled: no terminal receipt yet — classification has not run"
+            explain: "publish disabled: no terminal receipt yet — classification has not run"
                 .to_string(),
         },
     }
