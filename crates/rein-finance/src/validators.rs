@@ -521,8 +521,19 @@ impl ArtifactValidator for FactVsForecast {
             let text = String::from_utf8_lossy(input.bytes);
             for (i, line) in text.lines().enumerate() {
                 let lower = line.to_lowercase();
+                // "falsifier" and "catalyst" are the method's own required
+                // vocabulary for future-conditional lines — the contract
+                // demands those lines exist, so the rule must know them.
                 let marked = [
-                    "forecast", "scenario", "expect", "project", "assum", "reported", "ended",
+                    "forecast",
+                    "scenario",
+                    "expect",
+                    "project",
+                    "assum",
+                    "reported",
+                    "ended",
+                    "falsifier",
+                    "catalyst",
                 ]
                 .iter()
                 .any(|m| lower.contains(m));
