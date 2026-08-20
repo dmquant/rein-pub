@@ -62,7 +62,7 @@ fn write_artifact(
 
 pub struct FinanceDeterministic;
 
-struct LoadedCapture {
+pub(crate) struct LoadedCapture {
     digest: String,
     json: Value,
     note: String,
