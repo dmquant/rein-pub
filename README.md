@@ -121,6 +121,15 @@ valuation is not decision-ready. Missing inputs become *counted, justified
 defaults* — the coverage denominator is real, and silent truncation fails
 validation.
 
+Growth is an input with provenance, never a buried constant. The 5-year FCF
+path resolves in order: an operator-pinned `growth` capture (`rein data pin
+growth.json --note growth`, carrying flat `growth`, an exact `g` 5-vector,
+`discount_rate`, `terminal_growth` — operator authority, no clamp) → the
+pinned analyst-estimates capture's revenue endpoint CAGR (clamped [−10%,
++40%]; out-year average dips are coverage artifacts, and endpoint CAGR
+ignores them) → the captured FCF history's CAGR (clamped [0, 25%]) → a
+stated default. Every year's slot names its derivation and source digest.
+
 Swap in a real model with `--hand agy` (any model the `agy` CLI serves; set
 `agy_model` in config.toml). The
 adapter spawns it by absolute path, one attempt, no internal retries; the
