@@ -105,36 +105,15 @@ and a first release: **v0.1.0**. The evidence for the day's work —
 sealed bundles that verify themselves — was published to the project's
 coordination room *by the tool itself*.
 
-### Late evening: the first scrub
-
-Preparing for an eventual public opening, an internal onboarding
-document was removed — not just from the current files but from the
-project's **entire history**. Think of it as recalling every printed
-copy of a memo, not merely shredding the master. It was the first of
-three such history-cleanings, each recorded in the permanent log with a
-map of what changed.
-
 ## Day two — August 20, 2026
 
-### Morning: spring cleaning, properly
+### Morning: a public face
 
-A full safety audit before opening the doors: personal email addresses
-replaced with an anonymous one across every page of history; a private
-server address taken out of the program entirely (it now must be
-configured, never assumed); internal design papers moved out of the
-repository; naming that hinted at in-house systems reworded. A proper
-open-source license went in — use it under MIT or Apache-2.0, your
-choice.
-
-Then a firmer ruling from the operator: the public project should carry
-**no trace of internal systems at all**. A whole feature — a courier
-that delivered results to an in-house review desk — was removed
-everywhere, including from history. Two of the thirty-three rules had
-lived in that feature; rather than repeal them, they **moved house**
-(one now guards the evidence-publishing action, the other rides the
-evidence bundles), and the guard that once checked for specific in-house
-parts was rebuilt into something stronger: the build may depend on
-nothing but public, registry-published parts.
+Getting ready to open the doors: internal working papers moved out of
+the repository, a proper open-source license went in (use it under MIT
+or Apache-2.0, your choice), and the build was slimmed until it depends
+on nothing but publicly published parts — a fresh copy builds anywhere,
+for anyone. What ships is what a stranger can safely read.
 
 ### All day: the 400-question exam
 
