@@ -582,6 +582,49 @@ fn inv14__fact_vs_forecast__post_cutoff_fact_fails() {
         matches!(v_reported, ValidatorVerdict::Passed),
         "{v_reported:?}"
     );
+    // Fiscal-label face: a cited fiscal quarter one year ahead of the
+    // calendar is a filed quarter, not the 2027-claim class …
+    let memo_fiscal = b"Gross margin rebounded to 74.93% in Q1 FY2027 [3].".to_vec();
+    let v_fiscal = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_fiscal,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(matches!(v_fiscal, ValidatorVerdict::Passed), "{v_fiscal:?}");
+    // … but only that exact shape: an uncited fiscal line still marks,
+    let memo_uncited = b"Margins recover in Q2 FY2027.".to_vec();
+    let v_uncited = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_uncited,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(
+        matches!(v_uncited, ValidatorVerdict::Failed { .. }),
+        "{v_uncited:?}"
+    );
+    // and a further-out fiscal year is future no matter the dressing.
+    let memo_far = b"We see 80% margins in Q1 FY2029 [3].".to_vec();
+    let v_far = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_far,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(
+        matches!(v_far, ValidatorVerdict::Failed { .. }),
+        "{v_far:?}"
+    );
 }
 
 /// Invariants 17/18 — a citation resolves to captured bytes or fails; a word

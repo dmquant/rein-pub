@@ -526,10 +526,43 @@ impl ArtifactValidator for FactVsForecast {
                 if marked {
                     continue;
                 }
+                // A fiscal-quarter label one year ahead of the calendar,
+                // carrying a citation, IS the reported-history shape:
+                // fiscal years run at most a year ahead, and "74.9% in
+                // Q1 FY2027 [3]" is a filed quarter, not the 2027-claim
+                // class. Only that exact shape is exempt — bare years,
+                // further-out years, and uncited lines still must mark.
+                let has_citation = {
+                    let b = lower.as_bytes();
+                    let mut found = false;
+                    let mut j = 0;
+                    while j + 2 < b.len() {
+                        if b[j] == b'[' && b[j + 1].is_ascii_digit() {
+                            found = true;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    found
+                };
+                let fiscal_quarter = ["q1", "q2", "q3", "q4"].iter().any(|q| lower.contains(q));
                 for token in line.split(|c: char| !c.is_ascii_digit()) {
                     if token.len() == 4 {
                         if let Ok(y) = token.parse::<i32>() {
                             if (2000..=2100).contains(&y) && y > cutoff_year {
+                                let fiscal_label = y == cutoff_year + 1
+                                    && fiscal_quarter
+                                    && has_citation
+                                    && lower.match_indices(&y.to_string()).all(|(pos, _)| {
+                                        let head = &lower[..pos];
+                                        let head = head.trim_end();
+                                        head.ends_with("fy")
+                                            || head.ends_with("fiscal")
+                                            || head.ends_with("fiscal year")
+                                    });
+                                if fiscal_label {
+                                    continue;
+                                }
                                 return fail(format!(
                                     "line {}: year {y} stated without forecast/scenario marking, past cutoff year {cutoff_year} (invariant 14)",
                                     i + 1
