@@ -124,6 +124,12 @@ pub struct SkillFrontmatter {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
+    pub description: String,
+    /// Attempt refs a generated skill distilled its lessons from — the
+    /// provenance line for self-evolution.
+    #[serde(default)]
+    pub distilled_from: Vec<String>,
+    #[serde(default)]
     pub validator_refs: Vec<String>,
     #[serde(default)]
     pub requires_tools: Vec<String>,
@@ -135,6 +141,101 @@ pub struct SkillFrontmatter {
     pub output_schema: Option<String>,
 }
 
+/// Every validator reference a skill may legally carry — the two runtime
+/// built-ins plus the finance suite. A generated skill citing anything
+/// else fails validation instead of silently attaching nothing.
+pub const KNOWN_VALIDATOR_REFS: [&str; 11] = [
+    "artifact-wellformed@1",
+    "secret-scan@1",
+    "input-closure@1",
+    "numeric-consistency@1",
+    "bridge-completeness@1",
+    "falsifier-present@1",
+    "source-cutoff@1",
+    "fact-vs-forecast@1",
+    "citation-closure@1",
+    "coverage-denominator@1",
+    "ops-discipline@1",
+];
+
+/// Output schemas the contracts know how to demand.
+pub const KNOWN_OUTPUT_SCHEMAS: [&str; 5] = [
+    "rein.claims/v1",
+    "rein.valuation/v1",
+    "rein.verdicts/v1",
+    "rein.settlements/v1",
+    "rein.drivers-diff/v1",
+];
+
+/// Deterministic skill validation: every finding is a stated failure, an
+/// empty list is a pass. This is the gate a draft must clear before
+/// promotion — generation (model) and promotion (operator) sit on either
+/// side of it, and neither can skip it.
+pub fn validate_skill(content: &str) -> Vec<String> {
+    let mut fails = Vec::new();
+    if !content.trim_start().starts_with("---") {
+        fails.push("no frontmatter block (--- … ---)".to_string());
+        return fails;
+    }
+    let (fm, body) = parse_frontmatter(content);
+    if fm.name.trim().is_empty() {
+        fails.push("frontmatter: `name` is empty".to_string());
+    }
+    let desc = fm.description.trim();
+    if desc.is_empty() {
+        fails.push(
+            "frontmatter: `description` is empty — one concise sentence required".to_string(),
+        );
+    } else {
+        if desc.len() > 200 {
+            fails.push(format!(
+                "frontmatter: `description` is {} chars — one concise sentence (≤200)",
+                desc.len()
+            ));
+        }
+        let sentence_ends = desc
+            .trim_end_matches(['.', '。'])
+            .matches(['.', '。'])
+            .count();
+        if sentence_ends > 1 {
+            fails.push("frontmatter: `description` reads as multiple sentences — one".to_string());
+        }
+    }
+    for r in &fm.validator_refs {
+        if rein_core::ids::ValidatorRef::parse(r).is_err() {
+            fails.push(format!(
+                "validator_refs: `{r}` does not parse as a validator ref"
+            ));
+        } else if !KNOWN_VALIDATOR_REFS.contains(&r.as_str()) {
+            fails.push(format!(
+                "validator_refs: `{r}` is not a registered validator — it would attach nothing"
+            ));
+        }
+    }
+    if let Some(schema) = &fm.output_schema {
+        if !KNOWN_OUTPUT_SCHEMAS.contains(&schema.as_str()) {
+            fails.push(format!("output_schema: `{schema}` is not a known schema"));
+        }
+    }
+    if body.trim().len() < 200 {
+        fails.push(format!(
+            "body: {} chars — a playbook, not a note (≥200 required)",
+            body.trim().len()
+        ));
+    }
+    if !body.lines().any(|l| l.starts_with('#')) {
+        fails.push("body: no headings — structure is part of the method".to_string());
+    }
+    let lower = body.to_lowercase();
+    if !(lower.contains("falsif") || lower.contains("refut") || lower.contains("quality bar")) {
+        fails.push(
+            "body: no falsifier/refutation/quality-bar language — a skill states how its own output could fail"
+                .to_string(),
+        );
+    }
+    fails
+}
+
 pub fn parse_frontmatter(content: &str) -> (SkillFrontmatter, String) {
     let mut parts = content.splitn(3, "---");
     let _ = parts.next();
@@ -144,5 +245,43 @@ pub fn parse_frontmatter(content: &str) -> (SkillFrontmatter, String) {
             (fm, body.trim_start().to_string())
         }
         _ => (SkillFrontmatter::default(), content.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    #[test]
+    fn every_bundled_skill_passes_its_own_gate() {
+        for s in bundled() {
+            let fails = validate_skill(s.content);
+            assert!(fails.is_empty(), "{}: {fails:?}", s.file_name);
+        }
+    }
+
+    #[test]
+    fn validation_states_each_failure() {
+        // No frontmatter at all.
+        assert!(!validate_skill("# just a body").is_empty());
+        // Unknown validator ref and a multi-sentence description.
+        let bad = "---\nname: x\ndescription: One. Two. Three sentences here.\nvalidator_refs: [made-up@9]\n---\n# T\nshort";
+        let fails = validate_skill(bad);
+        assert!(fails.iter().any(|f| f.contains("made-up@9")), "{fails:?}");
+        assert!(
+            fails.iter().any(|f| f.contains("multiple sentences")),
+            "{fails:?}"
+        );
+        assert!(fails.iter().any(|f| f.contains("≥200")), "{fails:?}");
+        // A valid minimal skill passes.
+        let good = format!(
+            "---\nname: ok\ndescription: One concise sentence describing the method.\nvalidator_refs: [citation-closure@1]\n---\n# Method\n{}\n\nWhat would refute the output: a citation that fails to resolve.",
+            "A real playbook body long enough to be a method rather than a note. ".repeat(4)
+        );
+        assert!(
+            validate_skill(&good).is_empty(),
+            "{:?}",
+            validate_skill(&good)
+        );
     }
 }

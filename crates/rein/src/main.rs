@@ -129,6 +129,13 @@ enum Cmd {
     },
     /// The recovery queue across the workspace
     Recover,
+    /// Skill playbooks: list, validate, generate drafts from run evidence,
+    /// and promote — generation drafts, validation gates, the operator
+    /// promotes. Nothing self-authorizes.
+    Skill {
+        #[command(subcommand)]
+        cmd: SkillCmd,
+    },
     /// Evaluation, two-track (§4): financegym research scoring + internal
     /// settled-material hand ranking. Scores never touch TerminalOutcome.
     Eval {
@@ -189,6 +196,30 @@ enum EvalCmd {
         limit: Option<usize>,
         #[arg(long, default_value_t = 0)]
         offset: usize,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillCmd {
+    /// Installed skills and drafts, each with its validation status
+    List,
+    /// Deterministic checks on one skill file (name, path, or draft)
+    Validate { name: String },
+    /// Draft a new skill, distilling lessons from named attempts
+    New {
+        name: String,
+        #[arg(long = "applies-to", default_value = "research")]
+        applies_to: String,
+        /// Attempts whose receipts become the draft's evidence (repeatable)
+        #[arg(long = "from-attempt")]
+        from_attempt: Vec<String>,
+    },
+    /// Move a VALID draft into force (operator act; refuses invalid drafts)
+    Promote {
+        name: String,
+        /// Install under this task-type file name instead of the skill name
+        #[arg(long = "as")]
+        as_type: Option<String>,
     },
 }
 
@@ -616,6 +647,18 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
             }
         },
         Cmd::Recover => cmds::recover_queue(ctx),
+        Cmd::Skill { cmd } => match cmd {
+            SkillCmd::List => cmds::skill_list(ctx),
+            SkillCmd::Validate { name } => cmds::skill_validate(ctx, name),
+            SkillCmd::New {
+                name,
+                applies_to,
+                from_attempt,
+            } => cmds::skill_new(ctx, name, applies_to, from_attempt),
+            SkillCmd::Promote { name, as_type } => {
+                cmds::skill_promote(ctx, name, as_type.as_deref())
+            }
+        },
         Cmd::Eval { cmd } => match cmd {
             EvalCmd::Financegym {
                 file,

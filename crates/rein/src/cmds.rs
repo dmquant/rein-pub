@@ -1660,6 +1660,223 @@ pub fn tui(ctx: &Ctx) -> CmdResult {
     Ok(CmdOutput::ok(Value::Null))
 }
 
+// ---- skills: generation, validation, promotion — self-evolution with a
+// governance boundary: a model drafts, a deterministic gate validates, and
+// only the operator promotes into force. Nothing self-authorizes.
+
+fn skill_file_status(path: &std::path::Path) -> Value {
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let (fm, _) = rein_finance::skills::parse_frontmatter(&content);
+    let fails = rein_finance::skills::validate_skill(&content);
+    kv(&[
+        (
+            "file",
+            s(path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()),
+        ),
+        ("name", s(fm.name)),
+        ("description", s(fm.description)),
+        ("valid", json!(fails.is_empty())),
+        ("failures", json!(fails)),
+        ("distilled_from", json!(fm.distilled_from)),
+    ])
+}
+
+pub fn skill_list(ctx: &Ctx) -> CmdResult {
+    let (ws, _) = ctx.open()?;
+    let mut rows = Vec::new();
+    for (dir, tag) in [
+        (ws.skills(), "installed"),
+        (ws.skills().join("drafts"), "draft"),
+    ] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut paths: Vec<_> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "md"))
+            .collect();
+        paths.sort();
+        for p in paths {
+            let mut row = skill_file_status(&p);
+            if let Value::Object(m) = &mut row {
+                m.insert("status".into(), s(tag.to_string()));
+            }
+            rows.push(row);
+        }
+    }
+    Ok(CmdOutput::ok(Value::Array(rows)))
+}
+
+fn resolve_skill_path(ws: &rein_runtime::workspace::Workspace, name: &str) -> std::path::PathBuf {
+    if name.contains('/') || name.ends_with(".md") {
+        return std::path::PathBuf::from(name);
+    }
+    let installed = ws.skills().join(format!("{name}.md"));
+    if installed.exists() {
+        return installed;
+    }
+    ws.skills().join("drafts").join(format!("{name}.md"))
+}
+
+pub fn skill_validate(ctx: &Ctx, name: &str) -> CmdResult {
+    let (ws, _) = ctx.open()?;
+    let path = resolve_skill_path(&ws, name);
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| CliError::new(ExitCode::NotFound, format!("{}: {e}", path.display())))?;
+    let fails = rein_finance::skills::validate_skill(&content);
+    let ok = fails.is_empty();
+    let out = CmdOutput::ok(kv(&[
+        ("skill", s(path.display().to_string())),
+        ("valid", json!(ok)),
+        ("failures", json!(fails)),
+    ]));
+    Ok(if ok {
+        out
+    } else {
+        out.with_exit(ExitCode::ValidationFailed)
+    })
+}
+
+pub fn skill_new(ctx: &Ctx, name: &str, applies_to: &str, from_attempts: &[String]) -> CmdResult {
+    let (ws, mut store) = ctx.open()?;
+    // Evidence: outcomes and validator verdicts from the named attempts —
+    // the lessons a generated skill must distill, cited by attempt id.
+    let mut evidence = String::new();
+    for id in from_attempts {
+        let aid = attempt_id(id)?;
+        let row = store.get_attempt(&aid)?;
+        let log = store.load_attempt_log(&aid)?;
+        evidence.push_str(&format!(
+            "\n### attempt {} (task {})\n",
+            aid.as_str(),
+            row.task_ref.as_str()
+        ));
+        for e in log.for_attempt(&aid) {
+            match &e.body {
+                rein_core::receipts::ReceiptBody::Terminal {
+                    outcome, reason, ..
+                } => {
+                    evidence.push_str(&format!("- terminal: {outcome:?} ({})\n", reason.0));
+                }
+                rein_core::receipts::ReceiptBody::Validation {
+                    artifact_name,
+                    validator,
+                    verdict,
+                    ..
+                } => {
+                    evidence.push_str(&format!(
+                        "- validation {artifact_name} {validator}: {}\n",
+                        serde_json::to_string(verdict).unwrap_or_default()
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    if evidence.trim().is_empty() {
+        evidence = "(no attempts named — distill from the exemplar and the task type alone)".into();
+    }
+    // Style exemplar: the skill currently in force for this task type.
+    let exemplar = std::fs::read_to_string(ws.skills().join(format!("{applies_to}.md")))
+        .map(|t| t.chars().take(4000).collect::<String>())
+        .unwrap_or_default();
+
+    let config = ctx.user_config();
+    let Some(model) = config.agy_model.clone() else {
+        return Err(CliError::new(
+            ExitCode::Usage,
+            "no generator model — set agy_model in config.toml",
+        ));
+    };
+    let agy = config.agy_path.clone().unwrap_or_else(|| "agy".into());
+    let hand = rein_finance::hands::AgyHand::resolve(&agy, &model, std::env::temp_dir())
+        .map_err(|e| CliError::new(ExitCode::ProviderUnresolved, e.to_string()))?;
+    let prompt = format!(
+        "You are drafting a NEW skill playbook for the Rein research harness. Output the COMPLETE markdown file and nothing else: YAML frontmatter between --- fences, then the body.\n\
+         Frontmatter keys: name: {name} · description: ONE concise sentence · applies_to: {applies_to} · validator_refs: a YAML list drawn ONLY from {refs:?} (choose what the method genuinely needs) · authority_ceiling: proposal\n\
+         Body requirements: real analyst method with numbered stages or sections; a Discipline section; a 'Failure modes seen in practice' section distilled from the EVIDENCE below, citing attempt ids; a Quality bar section. State how the output could fail (falsifier/refutation language). No invented capabilities: only cite validators from the list given.\n\nEVIDENCE (receipts from real attempts):\n{evidence}\n\nSTYLE EXEMPLAR (current skill for this task type, follow its register):\n{exemplar}",
+        refs = rein_finance::skills::KNOWN_VALIDATOR_REFS
+    );
+    let draft_raw = hand
+        .prompt_once(&prompt)
+        .map_err(|e| CliError::new(ExitCode::Transport, e.to_string()))?;
+    // Strip a whole-file fence if the model added one.
+    let mut draft = draft_raw.trim().to_string();
+    if draft.starts_with("```") {
+        draft = draft
+            .trim_start_matches("```markdown")
+            .trim_start_matches("```md")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+            .to_string();
+    }
+    // Provenance rides the frontmatter whether or not the model wrote it.
+    if !draft.contains("distilled_from:") && !from_attempts.is_empty() {
+        if let Some(pos) = draft.find("\n---") {
+            let refs: Vec<String> = from_attempts.to_vec();
+            draft.insert_str(
+                pos,
+                &format!(
+                    "\ndistilled_from: {}",
+                    serde_json::to_string(&refs).unwrap_or_default()
+                ),
+            );
+        }
+    }
+    let drafts_dir = ws.skills().join("drafts");
+    std::fs::create_dir_all(&drafts_dir)
+        .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+    let path = drafts_dir.join(format!("{name}.md"));
+    std::fs::write(&path, &draft).map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+    let fails = rein_finance::skills::validate_skill(&draft);
+    let valid = fails.is_empty();
+    let out = CmdOutput::ok(kv(&[
+        ("draft", s(path.display().to_string())),
+        ("valid", json!(valid)),
+        ("failures", json!(fails)),
+        ("distilled_from", json!(from_attempts)),
+    ]))
+    .next(if valid {
+        format!("rein skill promote {name} — operator act; drafts never enter force by themselves")
+    } else {
+        format!("fix the draft, then rein skill validate drafts/{name}.md")
+    })
+    .warn("a generated draft is a proposal: validation is deterministic, promotion is yours");
+    Ok(if valid {
+        out
+    } else {
+        out.with_exit(ExitCode::ValidationFailed)
+    })
+}
+
+pub fn skill_promote(ctx: &Ctx, name: &str, as_type: Option<&str>) -> CmdResult {
+    let (ws, _) = ctx.open()?;
+    let draft = ws.skills().join("drafts").join(format!("{name}.md"));
+    let content = std::fs::read_to_string(&draft)
+        .map_err(|e| CliError::new(ExitCode::NotFound, format!("{}: {e}", draft.display())))?;
+    let fails = rein_finance::skills::validate_skill(&content);
+    if !fails.is_empty() {
+        return Ok(CmdOutput::ok(kv(&[
+            ("promoted", json!(false)),
+            ("failures", json!(fails)),
+        ]))
+        .with_exit(ExitCode::ValidationFailed));
+    }
+    let target = ws.skills().join(format!("{}.md", as_type.unwrap_or(name)));
+    std::fs::write(&target, &content)
+        .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+    Ok(CmdOutput::ok(kv(&[
+        ("promoted", json!(true)),
+        ("in_force", s(target.display().to_string())),
+    ]))
+    .warn("in force for NEW packs only — frozen packs keep the method text they were sealed with"))
+}
+
 // ---- M5: eval two-track + evidence publish ----------------------------------
 
 pub fn eval_financegym(
