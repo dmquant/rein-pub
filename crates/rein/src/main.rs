@@ -167,6 +167,29 @@ enum EvalCmd {
         #[arg(long, default_value = "answers.json")]
         out: String,
     },
+    /// Grade answered questions with an external judge model per the 0–4
+    /// rubric. Tiers land in a grades file for `--grades` — never in outcomes
+    Grade {
+        #[arg(short, long)]
+        file: Option<String>,
+        /// JSON map of question id → answer text (from `eval answers`)
+        #[arg(long)]
+        answers: String,
+        /// id → tier map (resumable; reasons land in <out>.reasons.json)
+        #[arg(long, default_value = "grades.json")]
+        out: String,
+        /// Judge binary (defaults to config agy_path, then `agy`)
+        #[arg(long)]
+        judge: Option<String>,
+        /// Judge model (defaults to config agy_model)
+        #[arg(long)]
+        judge_model: Option<String>,
+        /// Grade at most this many this run
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -594,6 +617,24 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
                 offset,
                 out,
             } => cmds::eval_answers(ctx, file.as_deref(), hand, *limit, *offset, out),
+            EvalCmd::Grade {
+                file,
+                answers,
+                out,
+                judge,
+                judge_model,
+                limit,
+                offset,
+            } => cmds::eval_grade(
+                ctx,
+                file.as_deref(),
+                answers,
+                out,
+                judge.as_deref(),
+                judge_model.as_deref(),
+                *limit,
+                *offset,
+            ),
         },
     }
 }

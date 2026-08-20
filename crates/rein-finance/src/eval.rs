@@ -334,3 +334,78 @@ pub fn rank_hands_on_settled(ws_objects: &Cas, store: &Store) -> Result<Vec<Hand
     });
     Ok(out)
 }
+
+/// The judge prompt for one question+answer pair — the paper's 0–4 rubric.
+/// Judging is EXTERNAL: tiers land in a grades file for `--grades` and never
+/// touch any TerminalOutcome.
+pub fn judge_prompt(q: &EvalQuestion, answer: &str) -> String {
+    let cutoff = if q.cutoff.is_empty() {
+        "(unstated)"
+    } else {
+        &q.cutoff
+    };
+    format!(
+        "You are grading one answer to a point-in-time financial research question.\n\
+         Question (knowledge cutoff {cutoff}): {question}\n\n\
+         Answer under grading:\n---\n{answer}\n---\n\n\
+         Rubric — pick exactly one tier:\n\
+         4 = correct on substance: key figures and direction right, well supported, respects the cutoff.\n\
+         3 = substantially correct; minor gaps or imprecision that would not change a decision.\n\
+         2 = right direction but with material errors or omissions.\n\
+         1 = mostly incorrect, vague, or only marginally responsive.\n\
+         0 = wrong, empty, off-question, or states post-cutoff events as fact.\n\n\
+         Reply with raw JSON only (no fences): {{\"tier\": <integer 0-4>, \"reason\": \"<one sentence>\"}}",
+        question = q.question,
+    )
+}
+
+/// Parse the judge's reply. Accepts trailing or fenced JSON; a missing or
+/// out-of-range tier is a refusal to grade (`None`) — never a default.
+pub fn parse_judge_tier(text: &str) -> Option<(u8, String)> {
+    let v = crate::hands::extract_trailing_json(text)?;
+    let tier = v.get("tier")?.as_u64()?;
+    if tier > 4 {
+        return None;
+    }
+    let reason = v
+        .get("reason")
+        .and_then(|r| r.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((tier as u8, reason))
+}
+
+#[cfg(test)]
+mod judge_tests {
+    use super::*;
+
+    #[test]
+    fn parse_judge_tier_plain_fenced_and_refusals() {
+        assert_eq!(
+            parse_judge_tier(r#"{"tier": 3, "reason": "close"}"#),
+            Some((3, "close".to_string()))
+        );
+        // Prose then a fenced object — the adapter's extractor handles fences.
+        let fenced = "Grading:\n```json\n{\"tier\": 4, \"reason\": \"solid\"}\n```";
+        assert_eq!(parse_judge_tier(fenced), Some((4, "solid".to_string())));
+        // Out-of-range or missing tiers are refusals, never defaults.
+        assert_eq!(parse_judge_tier(r#"{"tier": 7, "reason": "x"}"#), None);
+        assert_eq!(parse_judge_tier(r#"{"reason": "no tier"}"#), None);
+        assert_eq!(parse_judge_tier("no json at all"), None);
+    }
+
+    #[test]
+    fn judge_prompt_carries_question_cutoff_and_rubric() {
+        let q = EvalQuestion {
+            id: "q1".into(),
+            question: "What moved margins?".into(),
+            cutoff: "2026-01-01".into(),
+            expectations: vec![],
+        };
+        let p = judge_prompt(&q, "Mix shift.");
+        assert!(p.contains("What moved margins?"));
+        assert!(p.contains("2026-01-01"));
+        assert!(p.contains("0-4") || p.contains("0–4"));
+        assert!(p.contains("Mix shift."));
+    }
+}

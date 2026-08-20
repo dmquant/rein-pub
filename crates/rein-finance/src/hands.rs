@@ -498,6 +498,57 @@ impl AgyHand {
         })
     }
 
+    /// A bare prompted call OUTSIDE any attempt — the external judge's path
+    /// (`rein eval grade`). No receipts, no retries; an empty or non-SUCCESS
+    /// response is an error regardless of exit code.
+    pub fn prompt_once(&self, prompt: &str) -> Result<String, HandError> {
+        let out = std::process::Command::new(&self.binary)
+            .arg("--model")
+            .arg(&self.model)
+            .args(["--output-format", "json"])
+            .arg("--print-timeout")
+            .arg(format!("{}s", self.timeout_s))
+            .arg("--print")
+            .arg(prompt)
+            .current_dir(&self.workdir)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| HandError::Failed {
+                hand: "agy".into(),
+                detail: format!("failed to spawn {}: {e}", self.binary.display()),
+            })?;
+        let mut decoder = rein_core::capture::Utf8StreamDecoder::new();
+        let stdout = {
+            let mut s = decoder.feed(&out.stdout);
+            s.push_str(&decoder.finish());
+            s
+        };
+        let envelope: Option<AgyEnvelope> = serde_json::from_str(stdout.trim()).ok();
+        let (status, response) = envelope
+            .map(|e| (e.status, e.response))
+            .unwrap_or((None, Some(stdout.trim().to_string())));
+        let text = response.unwrap_or_default();
+        let ok = status
+            .as_deref()
+            .map_or(!text.is_empty(), |s| s == "SUCCESS")
+            && !text.is_empty();
+        if ok {
+            Ok(text)
+        } else {
+            let stderr: String = String::from_utf8_lossy(&out.stderr)
+                .chars()
+                .take(300)
+                .collect();
+            Err(HandError::Failed {
+                hand: format!("agy:{}", self.model),
+                detail: format!(
+                    "judge call failed: status {status:?}, exit {:?}, stderr: {stderr}",
+                    out.status.code()
+                ),
+            })
+        }
+    }
+
     fn prompt_for(&self, ctx: &HandContext<'_>) -> String {
         let inputs = read_inputs_manifest(ctx.inputs_dir);
         let mut input_blobs = String::new();
@@ -792,7 +843,7 @@ impl RuntimeHand for AgyHand {
 
 /// Trailing-JSON extraction (schema output arriving after prose or inside
 /// markdown fences — models drift; the extractor doesn't trust formatting).
-fn extract_trailing_json(text: &str) -> Option<Value> {
+pub(crate) fn extract_trailing_json(text: &str) -> Option<Value> {
     if let Ok(v) = serde_json::from_str(text.trim()) {
         return Some(v);
     }

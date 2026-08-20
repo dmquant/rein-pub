@@ -250,3 +250,64 @@ fn eval_answers_runs_real_attempts_and_resumes() {
     let (_, after, _) = cli.run(&["attempt", "list"]);
     assert_eq!(after["data"].as_array().unwrap().len(), n_before);
 }
+
+/// `eval grade`: an external judge emits tiers 0–4 into a resumable grades
+/// file; grading is file → file and appends nothing to any ledger.
+#[test]
+fn eval_grade_judges_answers_and_resumes() {
+    let cli = Cli::new();
+    write(
+        cli.ws.path(),
+        "qs.jsonl",
+        concat!(
+            r#"{"task_id":"g1","question":"What is 2+2 in USD millions?","cutoff":"2026-01-01"}"#,
+            "\n",
+            r#"{"task_id":"g2","question":"Second question","cutoff":"2026-01-01"}"#,
+            "\n",
+        ),
+    );
+    write(cli.ws.path(), "a.json", r#"{"g1":"It is 4 USD millions."}"#);
+
+    // A stub judge speaking the agy envelope.
+    let judge = cli.ws.path().join("judge.sh");
+    std::fs::write(
+        &judge,
+        "#!/bin/sh\necho '{\"status\":\"SUCCESS\",\"response\":\"{\\\"tier\\\": 3, \\\"reason\\\": \\\"close enough\\\"}\"}'\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&judge, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let judge_arg = judge.display().to_string();
+
+    let args = [
+        "eval",
+        "grade",
+        "-f",
+        "qs.jsonl",
+        "--answers",
+        "a.json",
+        "--out",
+        "grades.json",
+        "--judge",
+        judge_arg.as_str(),
+        "--judge-model",
+        "stub",
+    ];
+    let (code, json, _) = cli.run(&args);
+    assert_eq!(code, 0, "{json}");
+    assert_eq!(json["data"]["graded_now"], 1);
+    assert_eq!(json["data"]["missing_answers"], 1);
+    let grades: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cli.ws.path().join("grades.json")).unwrap())
+            .unwrap();
+    assert_eq!(grades["g1"], 3);
+
+    // Rerun: prior grades are prior work — nothing is re-judged.
+    let (code2, json2, _) = cli.run(&args);
+    assert_eq!(code2, 0);
+    assert_eq!(json2["data"]["graded_now"], 0);
+    assert_eq!(json2["data"]["already_graded"], 1);
+}

@@ -1667,6 +1667,127 @@ pub fn eval_internal(ctx: &Ctx) -> CmdResult {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn eval_grade(
+    ctx: &Ctx,
+    file: Option<&str>,
+    answers_file: &str,
+    out_file: &str,
+    judge: Option<&str>,
+    judge_model: Option<&str>,
+    limit: Option<usize>,
+    offset: usize,
+) -> CmdResult {
+    let text = match file {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| CliError::new(ExitCode::NotFound, format!("{path}: {e}")))?,
+        None => rein_finance::eval::SAMPLE_QUESTIONS.to_string(),
+    };
+    let questions = rein_finance::eval::load_questions_jsonl(&text)
+        .map_err(|e| CliError::new(ExitCode::Usage, e))?;
+    let answers: std::collections::BTreeMap<String, String> = {
+        let t = std::fs::read_to_string(answers_file)
+            .map_err(|e| CliError::new(ExitCode::NotFound, format!("{answers_file}: {e}")))?;
+        serde_json::from_str(&t).map_err(|e| CliError::new(ExitCode::Usage, e.to_string()))?
+    };
+    // Resumable: an existing grades file is prior work, never re-judged.
+    let mut grades: std::collections::BTreeMap<String, u8> = match std::fs::read_to_string(out_file)
+    {
+        Ok(t) => serde_json::from_str(&t)
+            .map_err(|e| CliError::new(ExitCode::Usage, format!("{out_file}: {e}")))?,
+        Err(_) => Default::default(),
+    };
+    let reasons_file = format!("{out_file}.reasons.json");
+    let mut reasons: std::collections::BTreeMap<String, String> =
+        match std::fs::read_to_string(&reasons_file) {
+            Ok(t) => serde_json::from_str(&t).unwrap_or_default(),
+            Err(_) => Default::default(),
+        };
+
+    let config = ctx.user_config();
+    let judge_bin = judge
+        .map(str::to_string)
+        .or_else(|| config.agy_path.clone())
+        .unwrap_or_else(|| "agy".to_string());
+    let Some(model) = judge_model.map(str::to_string).or(config.agy_model) else {
+        return Err(CliError::new(
+            ExitCode::Usage,
+            "no judge model — pass --judge-model or set agy_model in config.toml",
+        ));
+    };
+    let hand = rein_finance::hands::AgyHand::resolve(&judge_bin, &model, std::env::temp_dir())
+        .map_err(|e| CliError::new(ExitCode::ProviderUnresolved, e.to_string()))?;
+
+    let (mut graded_now, mut already, mut missing, mut failed) = (0usize, 0usize, 0usize, 0usize);
+    for q in questions.iter().skip(offset) {
+        if limit.is_some_and(|l| graded_now >= l) {
+            break;
+        }
+        if grades.contains_key(&q.id) {
+            already += 1;
+            continue;
+        }
+        let Some(answer) = answers.get(&q.id) else {
+            missing += 1;
+            continue;
+        };
+        let prompt = rein_finance::eval::judge_prompt(q, answer);
+        match hand.prompt_once(&prompt) {
+            Err(e) => {
+                failed += 1;
+                eprintln!(
+                    "judge error on {}: {e} — skipped, a rerun resumes here",
+                    q.id
+                );
+            }
+            Ok(reply) => match rein_finance::eval::parse_judge_tier(&reply) {
+                None => {
+                    failed += 1;
+                    eprintln!("judge reply for {} carried no valid tier — skipped", q.id);
+                }
+                Some((tier, reason)) => {
+                    grades.insert(q.id.clone(), tier);
+                    reasons.insert(q.id.clone(), reason);
+                    graded_now += 1;
+                    // Durable after every grade: an interrupt loses nothing.
+                    std::fs::write(
+                        out_file,
+                        serde_json::to_string_pretty(&grades).unwrap_or_default(),
+                    )
+                    .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+                    let _ = std::fs::write(
+                        &reasons_file,
+                        serde_json::to_string_pretty(&reasons).unwrap_or_default(),
+                    );
+                    eprintln!("graded {} → tier {tier} ({graded_now} this run)", q.id);
+                }
+            },
+        }
+    }
+    if graded_now == 0 && failed > 0 {
+        return Err(CliError::new(
+            ExitCode::Transport,
+            format!("judge produced no grades ({failed} failures)"),
+        ));
+    }
+    Ok(CmdOutput::ok(kv(&[
+        ("graded_now", json!(graded_now)),
+        ("already_graded", json!(already)),
+        ("missing_answers", json!(missing)),
+        ("judge_failures", json!(failed)),
+        ("grades", s(out_file.to_string())),
+        ("reasons", s(reasons_file)),
+        ("judge_model", s(model)),
+    ]))
+    .next(format!(
+        "rein eval financegym -f <questions.jsonl> --answers {answers_file} --grades {out_file}"
+    ))
+    .warn(
+        "judge tiers are one model's reading of the rubric, not ground truth — \
+         spot-check a sample before publishing scores",
+    ))
+}
+
 pub fn evidence_publish(
     ctx: &Ctx,
     attempt: &str,

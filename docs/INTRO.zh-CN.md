@@ -357,8 +357,14 @@ rein eval answers -f benchmark_400_public.jsonl --hand agy --out fg-answers.json
 7–13 小时的后台活，所以续跑不是锦上添花，是刚需。
 （`--hand finance:ops` 只输出自我声明的占位答案，仅供管线测试，不可用于真实基准。）
 
-**第二步：评分。** 逐题按 0–4 档评分标准打分——人工或 LLM 裁判——
-存成 `grades.json`（`{"<task_id>": 0..4, …}`）。
+**第二步：评分。** 逐题按 0–4 档评分标准打分，存成 `grades.json`
+（`{"<task_id>": 0..4, …}`）。人工打分，或用内置的裁判命令驱动一个
+外部模型逐题套评分标准（可中断续跑，理由写入 `grades.json.reasons.json`；
+裁判档位只是一个模型对评分标准的读法，不是标准答案——发布分数前抽查）：
+
+```sh
+rein eval grade -f benchmark_400_public.jsonl --answers fg-answers.json --out grades.json
+```
 
 **第三步：汇总。**
 

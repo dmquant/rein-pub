@@ -138,9 +138,12 @@ rein recover                                 # typed-anomaly queue
 rein attempt recover <id>                    # diagnosis first; then exactly
                                              # three actions: resume-commit |
                                              # retry | close-unknown
-rein eval financegym -f qs.jsonl --answers a.json   # tiers 0–4, s/(4n),
-rein eval internal                                  # seeded bootstrap CI;
-                                                    # scores never touch outcomes
+rein eval answers -f qs.jsonl --hand agy            # one receipted attempt
+rein eval grade -f qs.jsonl --answers answers.json  #   per question, resumable
+rein eval financegym -f qs.jsonl \                  # judge tiers 0–4 →
+    --answers answers.json --grades grades.json     #   s/(4n), bootstrap CI;
+rein eval internal                                  # scores never touch
+                                                    #   outcomes, ever
 ```
 
 Task types beyond `research` and `valuation`: `verify` (verdict per claim,
