@@ -1511,6 +1511,47 @@ pub fn capture_list(ctx: &Ctx) -> CmdResult {
     Ok(CmdOutput::ok(Value::Array(rows)))
 }
 
+pub fn data_pin(ctx: &Ctx, file: &str, note: &str, as_of: Option<&str>) -> CmdResult {
+    let bytes = std::fs::read(file)
+        .map_err(|e| CliError::new(ExitCode::NotFound, format!("{file}: {e}")))?;
+    let (ws, mut store) = ctx.open()?;
+    let cas = rein_runtime::cas::Cas::new(ws.objects());
+    let digest = cas
+        .put(&bytes)
+        .map_err(|e| CliError::new(ExitCode::Internal, e.to_string()))?;
+    let as_of = match as_of {
+        Some(t) => Some(
+            rein_core::time::Timestamp::parse(t)
+                .map_err(|e| CliError::new(ExitCode::Usage, format!("--as-of: {e}")))?,
+        ),
+        None => None,
+    };
+    let media_type = if file.ends_with(".json") {
+        "application/json"
+    } else {
+        "text/plain"
+    };
+    store.insert_capture(&rein_runtime::store::CaptureRow {
+        digest: digest.clone(),
+        tool: "data.pin".into(),
+        params: file.to_string(),
+        provider: "operator".into(),
+        media_type: media_type.into(),
+        as_of,
+        as_of_basis: as_of.map(|_| "operator".to_string()),
+        retrieved_at: SystemClock.now(),
+        url: None,
+        host: None,
+        note: Some(note.to_string()),
+    })?;
+    Ok(CmdOutput::ok(kv(&[
+        ("capture", s(format!("capture:{digest}"))),
+        ("note", s(note.to_string())),
+        ("provider", s("operator".to_string())),
+    ]))
+    .warn("operator-pinned input: provenance is the operator's stated file, not a provider pull"))
+}
+
 // ---- M3: evidence bundles, recovery console ---------------------------------
 
 pub fn evidence_bundle(ctx: &Ctx, attempt: &str, out: Option<&str>) -> CmdResult {

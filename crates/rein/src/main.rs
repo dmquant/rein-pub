@@ -231,6 +231,17 @@ enum DataCmd {
     Search { query: String },
     /// Fetch a URL and capture today's bytes (production mode)
     Fetch { url: String },
+    /// Pin a local file as an operator-provenance capture — the input path
+    /// for ops task types (verify/settle/monitor)
+    Pin {
+        file: String,
+        /// The note tag hands find inputs by (e.g. "claims", "meta", "series-prior")
+        #[arg(long)]
+        note: String,
+        /// What time the content is *about*, RFC3339 (optional)
+        #[arg(long)]
+        as_of: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -589,6 +600,7 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
             DataCmd::PullEquity { symbol, kinds } => cmds::data_pull_equity(ctx, symbol, kinds),
             DataCmd::Search { query } => cmds::data_search(ctx, query),
             DataCmd::Fetch { url } => cmds::data_fetch(ctx, url),
+            DataCmd::Pin { file, note, as_of } => cmds::data_pin(ctx, file, note, as_of.as_deref()),
         },
         Cmd::Capture { cmd } => match cmd {
             CaptureCmd::List => cmds::capture_list(ctx),
