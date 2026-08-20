@@ -50,6 +50,41 @@ pub fn bundled() -> Vec<SkillFile> {
             file_name: "research.md",
             content: RESEARCH_DEEP,
         },
+        // Ops task types consume these by name at pack freeze.
+        SkillFile {
+            file_name: "verify.md",
+            content: VERIFY,
+        },
+        SkillFile {
+            file_name: "settle.md",
+            content: SETTLE,
+        },
+        SkillFile {
+            file_name: "monitor.md",
+            content: MONITOR,
+        },
+        SkillFile {
+            file_name: "answer.md",
+            content: ANSWER,
+        },
+        // Method playbooks: copy over a task-type name (or point a custom
+        // task type at them) to put one in force.
+        SkillFile {
+            file_name: "earnings-review.md",
+            content: EARNINGS_REVIEW,
+        },
+        SkillFile {
+            file_name: "risk-map.md",
+            content: RISK_MAP,
+        },
+        SkillFile {
+            file_name: "thesis-memo.md",
+            content: THESIS_MEMO,
+        },
+        SkillFile {
+            file_name: "filing-review.md",
+            content: FILING_REVIEW,
+        },
     ]
 }
 
@@ -64,6 +99,14 @@ pub fn install(skills_dir: &Path) -> std::io::Result<usize> {
 }
 
 const RESEARCH_DEEP: &str = include_str!("../skills/deep-research.md");
+const VERIFY: &str = include_str!("../skills/verify.md");
+const SETTLE: &str = include_str!("../skills/settle.md");
+const MONITOR: &str = include_str!("../skills/monitor.md");
+const ANSWER: &str = include_str!("../skills/answer.md");
+const EARNINGS_REVIEW: &str = include_str!("../skills/earnings-review.md");
+const RISK_MAP: &str = include_str!("../skills/risk-map.md");
+const THESIS_MEMO: &str = include_str!("../skills/thesis-memo.md");
+const FILING_REVIEW: &str = include_str!("../skills/filing-review.md");
 
 const DCF: &str = include_str!("../skills/dcf-valuation.md");
 

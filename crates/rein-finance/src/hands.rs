@@ -1199,8 +1199,13 @@ impl RuntimeHand for AgyHand {
                     "(unstated)".to_string(),
                 )
             });
+            // The task-type skill (answer.md), when installed, arrives as
+            // the sandbox's system.md — the playbook governs the lane.
+            let system = std::fs::read_to_string(ctx.inputs_dir.join("system.md"))
+                .map(|s| format!("{s}\n\n"))
+                .unwrap_or_default();
             format!(
-                "You are answering a point-in-time financial research question inside the Rein harness.\n\
+                "{system}You are answering a point-in-time financial research question inside the Rein harness.\n\
                  Knowledge cutoff for this question: {cutoff}. Treat anything after that date as unknown — never state post-cutoff events as fact; label any projection as a forecast.\n\
                  Write a thorough, analytical answer in markdown (no preamble, no code fences around the whole answer). Cite concrete figures where you know them.\n\nQuestion: {question}"
             )
