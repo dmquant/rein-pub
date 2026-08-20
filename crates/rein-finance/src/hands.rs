@@ -133,9 +133,11 @@ pub(crate) fn fcf_cagr(rows: &[(String, f64)]) -> Option<f64> {
 }
 
 /// Forward growth from an analyst-estimates capture: consecutive YoY rates
-/// of `netIncomeAvg` (fallback `revenueAvg` — proxy stated), each clamped to
-/// [-10%, +40%], nearest-resampled onto the 5-year window. Forward market
-/// expectations with provider provenance — not this hand's opinion.
+/// of `revenueAvg` (broadest analyst coverage; out-year `netIncomeAvg` dips
+/// are coverage artifacts, not forecasts), fallback `netIncomeAvg`, each
+/// clamped to [-10%, +40%] and nearest-resampled onto the 5-year window.
+/// Forward market expectations with provider provenance — not this hand's
+/// opinion, and a revenue→FCF proxy stated as such.
 pub(crate) fn estimate_growth_path(
     captures: &[LoadedCapture],
 ) -> Option<([f64; 5], String, String)> {
@@ -147,10 +149,10 @@ pub(crate) fn estimate_growth_path(
         .iter()
         .filter_map(|r| {
             let date = r.get("date")?.as_str()?.to_string();
-            match r.get("netIncomeAvg").and_then(Value::as_f64) {
-                Some(v) if v > 0.0 => Some((date, v, "netIncomeAvg")),
-                _ => match r.get("revenueAvg").and_then(Value::as_f64) {
-                    Some(v) if v > 0.0 => Some((date, v, "revenueAvg")),
+            match r.get("revenueAvg").and_then(Value::as_f64) {
+                Some(v) if v > 0.0 => Some((date, v, "revenueAvg")),
+                _ => match r.get("netIncomeAvg").and_then(Value::as_f64) {
+                    Some(v) if v > 0.0 => Some((date, v, "netIncomeAvg")),
                     _ => None,
                 },
             }
@@ -1292,26 +1294,27 @@ mod estimate_growth_tests {
 
     #[test]
     fn estimates_yoy_rates_resampled_and_clamped() {
+        // Revenue is primary even when netIncome rows exist (coverage breadth);
+        // an out-year netIncome dip must not read as negative growth.
         let j = serde_json::json!([
-            {"date":"2031-06-30","netIncomeAvg": 334.0},
-            {"date":"2028-06-30","netIncomeAvg": 172.0},
-            {"date":"2029-06-30","netIncomeAvg": 209.0},
-            {"date":"2030-06-30","netIncomeAvg": 264.0},
+            {"date":"2031-06-30","revenueAvg": 334.0, "netIncomeAvg": 100.0},
+            {"date":"2028-06-30","revenueAvg": 172.0, "netIncomeAvg": 90.0},
+            {"date":"2029-06-30","revenueAvg": 209.0, "netIncomeAvg": 120.0},
+            {"date":"2030-06-30","revenueAvg": 264.0, "netIncomeAvg": 80.0},
         ]);
         let (path, _, desc) =
             estimate_growth_path(&[cap(j, "fmp:analyst-estimates:MSFT")]).unwrap();
-        // Three rates ≈ 21.5%, 26.3%, 26.5% → resampled [r1,r1,r2,r3,r3].
         assert!((path[0] - (209.0 / 172.0 - 1.0)).abs() < 1e-9);
         assert!((path[4] - (334.0 / 264.0 - 1.0)).abs() < 1e-9);
-        assert!(desc.contains("netIncomeAvg"));
-        // A 90% jump clamps to 40%.
+        assert!(desc.contains("revenueAvg"));
+        // A 90% jump clamps to 40%; netIncome is the fallback series.
         let j = serde_json::json!([
-            {"date":"2028-01-01","revenueAvg": 100.0},
-            {"date":"2029-01-01","revenueAvg": 190.0},
+            {"date":"2028-01-01","netIncomeAvg": 100.0},
+            {"date":"2029-01-01","netIncomeAvg": 190.0},
         ]);
         let (path, _, desc) = estimate_growth_path(&[cap(j, "analyst-estimates")]).unwrap();
         assert!(path.iter().all(|g| (*g - 0.40).abs() < 1e-9));
-        assert!(desc.contains("revenueAvg"));
+        assert!(desc.contains("netIncomeAvg"));
         // One usable row is not a path.
         let j = serde_json::json!([{"date":"2028-01-01","netIncomeAvg": 5.0}]);
         assert!(estimate_growth_path(&[cap(j, "analyst-estimates")]).is_none());
