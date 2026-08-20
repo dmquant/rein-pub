@@ -1,5 +1,7 @@
 # Rein
 
+**English** · [简体中文](README.zh-CN.md)
+
 **A standalone CLI/TUI harness for bounded, evidence-first financial
 research.**
 
@@ -9,6 +11,15 @@ CLI, a deterministic computer, a conformance fixture — does the work inside a
 fenced attempt; Rein captures everything every channel emitted, validates the
 artifacts, classifies the outcome **from receipts, never from exit codes or
 model prose**, and leaves you a replayable, self-verifying evidence trail.
+
+**In plain words:** Rein is a work harness for an AI research assistant
+doing financial analysis. It makes the assistant keep a receipt for every
+number, writes everything into a notebook that cannot be erased or
+rewritten, refuses to guess when it does not know, and lets you check any
+claim later — down to the exact page or filing it came from. If the work
+was sloppy, Rein says so plainly; no button anywhere can paint it green.
+New here? Read [the story so far](docs/STORY.md) — no technical background
+needed.
 
 ```sh
 rein run task:dcf-nvda@1 --hand agy --wait --require task-satisfied
@@ -260,6 +271,9 @@ deterministic core, and each refuses with a stated reason when unconfigured.
 
 ## Design, guarantees, provenance
 
+The project's update story, written for readers with no technical
+background, is at [`docs/STORY.md`](docs/STORY.md) (English) and
+[`docs/STORY.zh-CN.md`](docs/STORY.zh-CN.md) (中文).
 A detailed introduction in Simplified Chinese, with diagrams, is at
 `docs/INTRO.zh-CN.md`. The build follows an internal design document (v0.2,
 sha256 `e685d399…97cb0`) that is not shipped here; its enforceable surface
