@@ -508,14 +508,21 @@ impl ArtifactValidator for FactVsForecast {
         }
         if input.artifact.media_type == "text/markdown" {
             // Deterministic prose rule: a year beyond the cutoff year may
-            // appear only on lines marked forecast/scenario/expected.
+            // appear only on lines marked forecast/scenario/expected — or
+            // explicitly historical ("reported", "ended"): fiscal-year
+            // labels run ahead of the calendar (NVDA's Q1 FY2027 ended
+            // April 2026), and a reported quarter is not the 2027-claim
+            // class. A false "reported" is a citation problem, and
+            // citation-closure owns that.
             let cutoff_year: i32 = self.cutoff.canonical()[..4].parse().unwrap_or(9999);
             let text = String::from_utf8_lossy(input.bytes);
             for (i, line) in text.lines().enumerate() {
                 let lower = line.to_lowercase();
-                let marked = ["forecast", "scenario", "expect", "project", "assum"]
-                    .iter()
-                    .any(|m| lower.contains(m));
+                let marked = [
+                    "forecast", "scenario", "expect", "project", "assum", "reported", "ended",
+                ]
+                .iter()
+                .any(|m| lower.contains(m));
                 if marked {
                     continue;
                 }

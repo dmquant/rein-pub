@@ -565,6 +565,23 @@ fn inv14__fact_vs_forecast__post_cutoff_fact_fails() {
         },
     );
     assert!(matches!(v_ok, ValidatorVerdict::Passed));
+    // Historicity face: fiscal labels run ahead of the calendar — a
+    // fiscal-2027 quarter already reported before the cutoff is history,
+    // not the 2027-claim class, when the sentence says so.
+    let memo_reported = b"Q1 FY2027 revenue was $44.1B, reported April 2026 [1].".to_vec();
+    let v_reported = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_reported,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(
+        matches!(v_reported, ValidatorVerdict::Passed),
+        "{v_reported:?}"
+    );
 }
 
 /// Invariants 17/18 — a citation resolves to captured bytes or fails; a word

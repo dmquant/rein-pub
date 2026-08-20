@@ -112,6 +112,10 @@ One dossier that CONNECTS the findings, not a stapler for section notes:
   not a citation.
 - Facts carry evidence; forecasts carry falsifiers; nothing dated after
   the knowledge cutoff is stated as fact.
+- Fiscal labels run ahead of the calendar: a fiscal period labeled past
+  the cutoff whose results are already in the sources is history — write
+  "reported" (or "ended <date>") in that sentence; anything genuinely
+  future is marked forecast or scenario.
 - Copy numbers exactly as the sources give them, with period labels.
 - If the sources cannot answer a sub-question, say so plainly — absence
   is stated, never padded over.
