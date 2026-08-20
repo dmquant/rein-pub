@@ -328,6 +328,32 @@ claims — four facts, two forecasts — each with a genuine falsifier:
 
 The evidence bundle for the run verifies, like every other.
 
+**The harness studied a sibling and learned staging** — and then spent
+five runs teaching one of its own rules to read analyst prose. The
+operator handed over a working research application to learn from; its
+method (plan first, investigate per section, synthesize with positions)
+became an editable skill document, and the research hand became a staged
+pipeline with one safeguard the original never had: the model cites
+numbered sources and *never writes a source fingerprint itself*. The
+first staged run over ten sources — four earnings-call transcripts among
+them — produced by far the best dossier yet, and failed validation.
+So did the next three, each on the same rule, each on a *different
+legitimate sentence*: a reported fiscal quarter (fiscal years run ahead
+of the calendar), a cited statement of management's own roadmap, and
+finally the falsifier line itself — the most honest sentence in the
+document. Four failures, four honest classifications, one structural
+lesson: the deadly form of a future-claim is the *unfalsifiable* one, so
+the recorded rule became "unmarked and uncited fails; a cited line
+answers to its source." The fifth run passed everything. All four
+failed dossiers remain in the ledger with their reasons — the record of
+a rule being taught is itself evidence.
+
+**And a library grew.** The playbooks stopped being code and became
+fourteen reviewable documents — how to value, verify, settle, monitor,
+answer, review an earnings print, map risks so they can actually be
+watched, and write the one-sentence falsifiable thesis — each carrying
+the failure modes that cost a real run.
+
 **And this document** — in two languages, with its diagrams.
 
 ## 5 · The invariants that do not move
