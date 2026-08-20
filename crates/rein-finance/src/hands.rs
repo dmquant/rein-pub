@@ -89,6 +89,74 @@ fn load_captures(ctx: &HandContext<'_>) -> Vec<LoadedCapture> {
     out
 }
 
+/// All (date, freeCashFlow) rows from the cash-flow capture, oldest first,
+/// with the capture digest — the growth *history* is data, not a dial.
+fn fcf_rows(captures: &[LoadedCapture]) -> Option<(Vec<(String, f64)>, String)> {
+    for c in captures {
+        if !c.note.contains("cash-flow") {
+            continue;
+        }
+        if let Some(arr) = c.json.as_array() {
+            let mut rows: Vec<(String, f64)> = arr
+                .iter()
+                .filter_map(|r| {
+                    Some((
+                        r.get("date")?.as_str()?.to_string(),
+                        r.get("freeCashFlow")?.as_f64()?,
+                    ))
+                })
+                .collect();
+            if rows.len() >= 2 {
+                rows.sort_by(|a, b| a.0.cmp(&b.0));
+                return Some((rows, c.digest.clone()));
+            }
+        }
+    }
+    None
+}
+
+/// Oldest→newest CAGR over the captured FCF history. Requires positive
+/// endpoints; falls back to the latest positive-to-positive year pair;
+/// `None` when nothing derivable — a refusal, not a guess.
+pub(crate) fn fcf_cagr(rows: &[(String, f64)]) -> Option<f64> {
+    let (first, last) = (rows.first()?, rows.last()?);
+    let years = (rows.len() - 1) as f64;
+    if first.1 > 0.0 && last.1 > 0.0 && years >= 1.0 {
+        return Some((last.1 / first.1).powf(1.0 / years) - 1.0);
+    }
+    for w in rows.windows(2).rev() {
+        if w[0].1 > 0.0 && w[1].1 > 0.0 {
+            return Some(w[1].1 / w[0].1 - 1.0);
+        }
+    }
+    None
+}
+
+/// Linear fade from year-1 growth `g` to `terminal` by year 5 — the explicit
+/// window glides into the terminal assumption instead of cliff-dropping.
+pub(crate) fn fade_path(g: f64, terminal: f64) -> [f64; 5] {
+    let mut path = [0.0; 5];
+    for (i, p) in path.iter_mut().enumerate() {
+        *p = g + (terminal - g) * (i as f64) / 4.0;
+    }
+    path
+}
+
+/// Operator-pinned growth override (a capture whose note contains "growth"):
+/// `{"g": [..5]}` exact path, or `{"growth": x}` flat; optional
+/// `discount_rate` / `terminal_growth`. Operator authority — no clamp.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct GrowthPin {
+    #[serde(default)]
+    pub growth: Option<f64>,
+    #[serde(default)]
+    pub g: Option<Vec<f64>>,
+    #[serde(default)]
+    pub discount_rate: Option<f64>,
+    #[serde(default)]
+    pub terminal_growth: Option<f64>,
+}
+
 fn field(captures: &[LoadedCapture], note_tag: &str, key: &str) -> Option<(f64, String)> {
     for c in captures {
         if !c.note.contains(note_tag) {
@@ -141,15 +209,72 @@ impl RuntimeHand for FinanceDeterministic {
             }
         }
 
-        // FCF base from the cash-flow capture, grown 8%/y for 5 years.
+        // Growth is an input with provenance, never a buried constant:
+        // operator-pinned override > capture-derived FCF CAGR (clamped
+        // [0, 25%], faded to terminal by year 5) > stated 8% legacy default.
+        let pin: Option<(GrowthPin, String)> = captures
+            .iter()
+            .find(|c| c.note.contains("growth"))
+            .and_then(|c| {
+                serde_json::from_value::<GrowthPin>(c.json.clone())
+                    .ok()
+                    .map(|p| (p, c.digest.clone()))
+            });
+        let terminal_default = 0.025f64;
+        let terminal = pin
+            .as_ref()
+            .and_then(|(p, _)| p.terminal_growth)
+            .unwrap_or(terminal_default);
+
         let fcf_base = field(&captures, "cash-flow", "freeCashFlow");
         let base = fcf_base.as_ref().map(|(v, _)| *v).unwrap_or(1_000.0);
-        for y in 1..=5usize {
-            let grown = base * 1.08f64.powi(y as i32);
+        let history = fcf_rows(&captures);
+        let (path, growth_why): ([f64; 5], String) = if let Some((p, digest)) =
+            pin.as_ref().and_then(|(p, d)| {
+                p.g.as_ref()
+                    .filter(|v| v.len() == 5)
+                    .map(|v| ([v[0], v[1], v[2], v[3], v[4]], d.clone()))
+            }) {
+            (
+                p,
+                format!("operator-pinned year-by-year growth path (capture {digest})"),
+            )
+        } else if let Some((g, digest)) = pin
+            .as_ref()
+            .and_then(|(p, d)| p.growth.map(|g| (g, d.clone())))
+        {
+            (
+                [g; 5],
+                format!("operator-pinned flat growth {g:.4}/y (capture {digest})"),
+            )
+        } else if let Some((raw, digest)) = history
+            .as_ref()
+            .and_then(|(rows, d)| fcf_cagr(rows).map(|g| (g, d.clone())))
+        {
+            let clamped = raw.clamp(0.0, 0.25);
+            (
+                fade_path(clamped, terminal),
+                format!(
+                    "historical FCF CAGR {raw:.4}/y over {} captured periods (capture {digest}), clamped to {clamped:.4}, faded linearly to terminal {terminal:.4} by year 5",
+                    history.as_ref().map(|(r, _)| r.len()).unwrap_or(0)
+                ),
+            )
+        } else {
+            (
+                [0.08; 5],
+                "no derivable FCF history and no operator growth pin — legacy 8%/y flat default"
+                    .to_string(),
+            )
+        };
+
+        let mut fcf = base;
+        for (y, g) in path.iter().enumerate() {
+            let y = y + 1;
+            fcf *= 1.0 + g;
             match &fcf_base {
                 Some((_, digest)) if y == 1 => slots_out.push(Slot {
                     name: slots::fcf_year(1),
-                    value: grown,
+                    value: fcf,
                     unit: "ccy".into(),
                     frame: None,
                     basis: Basis::Capture {
@@ -160,17 +285,17 @@ impl RuntimeHand for FinanceDeterministic {
                 }),
                 _ => slots_out.push(Slot {
                     name: slots::fcf_year(y),
-                    value: grown,
+                    value: fcf,
                     unit: "ccy".into(),
                     frame: None,
                     basis: Basis::Assumption {
                         justification: format!(
-                            "year-{y} FCF grown 8%/y from the captured base ({})",
+                            "year-{y} FCF at growth {g:.4}: {growth_why}; base {}",
                             fcf_base
                                 .as_ref()
                                 .map(|(_, d)| format!("capture {d}"))
                                 .unwrap_or_else(
-                                    || "defaulted base — no cash-flow capture pinned".to_string()
+                                    || "defaulted — no cash-flow capture pinned".to_string()
                                 )
                         ),
                     },
@@ -187,7 +312,10 @@ impl RuntimeHand for FinanceDeterministic {
             &mut slots_out,
             slots::DISCOUNT_RATE,
             "rate",
-            None,
+            pin.as_ref().and_then(|(p, d)| {
+                p.discount_rate
+                    .map(|v| (v, d.clone(), "discount_rate".to_string()))
+            }),
             0.095,
             "CAPM with rf 4.2% + 5.0% ERP at beta ~1.05; declared assumption pending a rates capture",
         );
@@ -195,7 +323,10 @@ impl RuntimeHand for FinanceDeterministic {
             &mut slots_out,
             slots::TERMINAL_GROWTH,
             "rate",
-            None,
+            pin.as_ref().and_then(|(p, d)| {
+                p.terminal_growth
+                    .map(|v| (v, d.clone(), "terminal_growth".to_string()))
+            }),
             0.025,
             "long-run nominal growth anchor; declared assumption",
         );
@@ -1066,5 +1197,50 @@ impl RuntimeHand for FinanceOps {
         }
         push(2, HandEvent::RunCompleted { child_exit: None });
         Ok(HandRunOutcome { events, claimed })
+    }
+}
+
+#[cfg(test)]
+mod growth_tests {
+    use super::*;
+
+    #[test]
+    fn fcf_cagr_positive_endpoints_and_fallbacks() {
+        let rows = |v: &[f64]| -> Vec<(String, f64)> {
+            v.iter()
+                .enumerate()
+                .map(|(i, x)| (format!("202{i}-01-01"), *x))
+                .collect()
+        };
+        // 8.1B → 96.7B over 4 years ≈ 85.9%/y (the NVDA shape).
+        let g = fcf_cagr(&rows(&[8132.0, 3808.0, 27021.0, 60853.0, 96676.0])).unwrap();
+        assert!((g - 0.857).abs() < 0.05, "{g}");
+        // Negative oldest endpoint: fall back to the latest positive pair.
+        let g = fcf_cagr(&rows(&[-5.0, 10.0, 12.0])).unwrap();
+        assert!((g - 0.2).abs() < 1e-9);
+        // Nothing derivable is a refusal, never a guess.
+        assert_eq!(fcf_cagr(&rows(&[-5.0, -3.0])), None);
+    }
+
+    #[test]
+    fn fade_path_glides_from_g_to_terminal() {
+        let p = fade_path(0.25, 0.025);
+        assert!((p[0] - 0.25).abs() < 1e-12);
+        assert!((p[4] - 0.025).abs() < 1e-12);
+        assert!(p.windows(2).all(|w| w[1] < w[0]), "monotone fade: {p:?}");
+    }
+
+    #[test]
+    fn growth_pin_parses_flat_path_and_rate_overrides() {
+        let v: serde_json::Value = serde_json::json!({
+            "growth": 0.30, "discount_rate": 0.11, "terminal_growth": 0.03
+        });
+        let p: GrowthPin = serde_json::from_value(v).unwrap();
+        assert_eq!(p.growth, Some(0.30));
+        assert_eq!(p.discount_rate, Some(0.11));
+        assert_eq!(p.terminal_growth, Some(0.03));
+        let v: serde_json::Value = serde_json::json!({"g": [0.5, 0.4, 0.3, 0.2, 0.1]});
+        let p: GrowthPin = serde_json::from_value(v).unwrap();
+        assert_eq!(p.g.unwrap().len(), 5);
     }
 }
