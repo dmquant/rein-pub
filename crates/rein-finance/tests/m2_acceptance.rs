@@ -640,6 +640,19 @@ fn inv14__fact_vs_forecast__post_cutoff_fact_fails() {
         matches!(v_bare, ValidatorVerdict::Failed { .. }),
         "{v_bare:?}"
     );
+    // The method's own vocabulary marks its lines: a falsifier is
+    // forward-conditional by construction.
+    let memo_falsifier = b"* Falsifier: growth decelerates below 25% prior to FY2029.".to_vec();
+    let v_fals = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_falsifier,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(matches!(v_fals, ValidatorVerdict::Passed), "{v_fals:?}");
 }
 
 /// Invariants 17/18 — a citation resolves to captured bytes or fails; a word
