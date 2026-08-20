@@ -30,7 +30,7 @@ pub struct ProvidersLock {
     /// The one labeled nondeterministic field.
     pub generated_at: Option<Timestamp>,
     pub pins: BTreeMap<String, ProviderPin>,
-    /// Free-form evidence, e.g. the sibling-estate git commit backing path deps
+    /// Free-form evidence, e.g. the git commit backing a path dependency
     /// (recorded per the Q2 position).
     #[serde(default)]
     pub notes: BTreeMap<String, String>,

@@ -12,8 +12,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 thiserror = "1"
-# HTTP pattern proven in the sibling-estate estate: blocking ureq with an explicit
-# native-tls connector.
+# HTTP pattern: blocking ureq with an explicit native-tls connector —
+# versions pinned for the cargo 1.82 floor.
 ureq = { version = "=2.12.1", default-features = false, features = ["json", "native-tls"] }
 native-tls = "0.2"
 

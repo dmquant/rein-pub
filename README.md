@@ -211,6 +211,7 @@ fmp_env_file = "/path/to/.env"
 agy_path     = "agy"
 agy_model    = "gemini-3.7-flash-low"
 agora_key_path = "~/.agora/rein-party-key"
+agora_hub      = "https://agora.example"
 ```
 
 Workspace layout (`.rein/`): `workspace.yaml` · `providers.lock` · `policies/`
@@ -239,17 +240,18 @@ deterministic core, and each refuses with a stated reason when unconfigured.
   mirrored natively so the build stays standalone, and the integration test
   exercises the real binary wherever it is installed.
 - **A coordination hub** — `rein evidence publish <attempt> --room <id>`
-  posts a bundle summary (with its sha256) to an AGORA room using a party
-  key from configRoot. Publication is explicit, never ambient, and a hub
-  outage can never stop a run.
+  posts a bundle summary (with its sha256) to an AGORA room, using a party
+  key and hub URL from configRoot (`agora_hub`, or `--hub`; no endpoint is
+  baked in). Publication is explicit, never ambient, and a hub outage can
+  never stop a run.
 
 ## Design, guarantees, provenance
 
 A detailed introduction in Simplified Chinese, with diagrams, is at
-`docs/INTRO.zh-CN.md`. The full design is
-`docs/Rein-Financial-Research-Harness-Design.md` (v0.2);
-`docs/INVARIANTS.md` maps all **33 invariants → production symbol → reddening
-test — 33/33 green**. Deviations from the design text (two objections, the
+`docs/INTRO.zh-CN.md`. The build follows an internal design document (v0.2,
+sha256 `e685d399…97cb0`) that is not shipped here; its enforceable surface
+is `docs/INVARIANTS.md`, which maps all **33 invariants → production symbol
+→ reddening test — 33/33 green**. Deviations from the design text (two objections, the
 hand-binding hash exclusion, the native wire mirror) are recorded decisions
 with their reasons, and reversing any of them silently reddens tests.
 Deliberately unbuilt, each with a stated reinstatement condition: lease

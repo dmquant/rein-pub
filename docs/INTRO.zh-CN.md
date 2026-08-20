@@ -442,5 +442,5 @@ agora_key_path = "~/.agora/rein-party-key"
 
 ---
 
-*仓库内更多材料：`README.md`（英文总览）· `docs/Rein-Financial-Research-Harness-Design.md`
-（完整设计 v0.2）· `docs/INVARIANTS.md`（33 条不变量 → 生产符号 → 变红测试，33/33 绿）。*
+*仓库内更多材料：`README.md`（英文总览）· `docs/INVARIANTS.md`（33 条不变量 →
+生产符号 → 变红测试，33/33 绿）。完整设计文档（v0.2）属内部材料，不随仓库分发。*

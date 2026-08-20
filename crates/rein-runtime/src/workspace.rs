@@ -181,10 +181,14 @@ pub struct UserConfig {
     pub agy_path: Option<String>,
     #[serde(default)]
     pub agy_model: Option<String>,
-    /// An operator-named env file to fall back to for provider keys
-    /// (e.g. the sibling-estate `.env`) — a pointer, never a value.
+    /// An operator-named env file to fall back to for provider keys —
+    /// a pointer, never a value.
     #[serde(default)]
     pub fmp_env_file: Option<String>,
+    /// AGORA hub base URL for `evidence publish`. No baked-in default:
+    /// unset and no `--hub` means the crossing refuses with a stated reason.
+    #[serde(default)]
+    pub agora_hub: Option<String>,
 }
 
 pub fn default_config_root() -> PathBuf {
@@ -223,6 +227,7 @@ pub fn load_user_config(config_root: &Path) -> UserConfig {
             "agy_path" => cfg.agy_path = Some(v),
             "agy_model" => cfg.agy_model = Some(v),
             "fmp_env_file" => cfg.fmp_env_file = Some(v),
+            "agora_hub" => cfg.agora_hub = Some(v),
             _ => {}
         }
     }

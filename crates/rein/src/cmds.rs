@@ -1840,14 +1840,22 @@ pub fn evidence_publish(
                 .unwrap_or_default()
                 .join(".agora/rein-party-key")
         });
-    let hub = hub.unwrap_or("https://agora-hub.example.invalid");
+    let hub = hub
+        .map(str::to_string)
+        .or(config.agora_hub)
+        .ok_or_else(|| {
+            CliError::new(
+                ExitCode::ProviderUnresolved,
+                "no AGORA hub configured — pass --hub <url> or set agora_hub in config.toml",
+            )
+        })?;
     let room = room.ok_or_else(|| {
         CliError::new(
             ExitCode::Usage,
             "pass --room <id> — publication is explicit, never ambient",
         )
     })?;
-    let client = rein_finance::agora::AgoraClient::new(hub, &key_path)
+    let client = rein_finance::agora::AgoraClient::new(&hub, &key_path)
         .map_err(|e| CliError::new(ExitCode::ProviderUnresolved, e.to_string()))?;
     let (body, evidence) = rein_finance::agora::bundle_publish_body(
         aid.as_str(),

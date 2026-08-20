@@ -62,7 +62,7 @@ impl FmpClient {
     }
 
     /// Resolve the key: env, then configRoot secrets (`fmp`), then an
-    /// operator-named env file (e.g. the sibling-estate `.env`) — refusal otherwise.
+    /// operator-named env file — refusal otherwise.
     pub fn discover(
         broker: &rein_runtime::workspace::SecretBroker,
         extra_env_file: Option<&std::path::Path>,

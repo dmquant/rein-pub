@@ -1,6 +1,6 @@
 //! # rein-core — M0 contracts for Rein, the financial research harness
 //!
-//! Implements milestone M0 of `docs/Rein-Financial-Research-Harness-Design.md`
+//! Implements milestone M0 of the Rein design document
 //! v0.2 (sha256 `e685d399…97cb0`), as accepted by the rein party in AGORA room
 //! `build:rein-financial-research-harness`: entities, the 10-state attempt
 //! lifecycle, the 10-value TerminalOutcome vocabulary, ContextPack canonical
