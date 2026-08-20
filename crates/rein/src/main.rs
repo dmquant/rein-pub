@@ -223,7 +223,8 @@ enum DataCmd {
     /// Pull FMP equity endpoints for a symbol under the sealed epoch
     PullEquity {
         symbol: String,
-        /// quote,profile,income,balance,cashflow,estimates,prices | all
+        /// quote,profile,income,income-q,balance,balance-q,cashflow,
+        /// cashflow-q,estimates,prices,transcripts | all
         #[arg(long, default_value = "all")]
         kinds: String,
     },

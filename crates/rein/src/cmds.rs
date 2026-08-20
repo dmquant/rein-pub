@@ -1413,16 +1413,20 @@ pub fn data_pull_equity(ctx: &Ctx, symbol: &str, kinds: &str) -> CmdResult {
                 "income" => Some(E::IncomeStatement),
                 "balance" => Some(E::BalanceSheet),
                 "cashflow" => Some(E::CashFlow),
+                "income-q" => Some(E::IncomeQuarter),
+                "balance-q" => Some(E::BalanceQuarter),
+                "cashflow-q" => Some(E::CashFlowQuarter),
                 "estimates" => Some(E::AnalystEstimates),
                 "prices" => Some(E::PricesEod),
                 _ => None,
             })
             .collect()
     };
-    if wanted.is_empty() {
+    let wants_transcripts = kinds == "all" || kinds.split(',').any(|k| k.trim() == "transcripts");
+    if wanted.is_empty() && !wants_transcripts {
         return Err(CliError::new(
             ExitCode::Usage,
-            "kinds: comma list of quote,profile,income,balance,cashflow,estimates,prices or `all`",
+            "kinds: comma list of quote,profile,income,income-q,balance,balance-q,cashflow,cashflow-q,estimates,prices,transcripts or `all`",
         ));
     }
     let mut results = Vec::new();
@@ -1439,6 +1443,20 @@ pub fn data_pull_equity(ctx: &Ctx, symbol: &str, kinds: &str) -> CmdResult {
                 ),
             ])),
             Err(err) => warnings.push(format!("{}: {err}", e.tool_name())),
+        }
+    }
+    if wants_transcripts {
+        match cs.pull_transcripts(&client, symbol, &epoch, now, 4) {
+            Ok(caps) => {
+                for (digest, label) in caps {
+                    results.push(kv(&[
+                        ("tool", s("data.equity.transcripts")),
+                        ("digest", s(digest.to_string())),
+                        ("label", s(label)),
+                    ]));
+                }
+            }
+            Err(err) => warnings.push(format!("data.equity.transcripts: {err}")),
         }
     }
     let mut out = CmdOutput::ok(Value::Array(results));

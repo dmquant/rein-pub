@@ -134,6 +134,9 @@ pub enum EquityEndpoint {
     IncomeStatement,
     BalanceSheet,
     CashFlow,
+    IncomeQuarter,
+    BalanceQuarter,
+    CashFlowQuarter,
     AnalystEstimates,
     PricesEod,
 }
@@ -143,9 +146,9 @@ impl EquityEndpoint {
         match self {
             Self::Quote => "quote",
             Self::Profile => "profile",
-            Self::IncomeStatement => "income-statement",
-            Self::BalanceSheet => "balance-sheet-statement",
-            Self::CashFlow => "cash-flow-statement",
+            Self::IncomeStatement | Self::IncomeQuarter => "income-statement",
+            Self::BalanceSheet | Self::BalanceQuarter => "balance-sheet-statement",
+            Self::CashFlow | Self::CashFlowQuarter => "cash-flow-statement",
             Self::AnalystEstimates => "analyst-estimates",
             Self::PricesEod => "historical-price-eod/full",
         }
@@ -155,11 +158,25 @@ impl EquityEndpoint {
         match self {
             Self::Quote => "data.equity.quote",
             Self::Profile => "data.equity.profile",
-            Self::IncomeStatement | Self::BalanceSheet | Self::CashFlow => {
-                "data.equity.fundamentals"
-            }
+            Self::IncomeStatement
+            | Self::BalanceSheet
+            | Self::CashFlow
+            | Self::IncomeQuarter
+            | Self::BalanceQuarter
+            | Self::CashFlowQuarter => "data.equity.fundamentals",
             Self::AnalystEstimates => "data.equity.estimates",
             Self::PricesEod => "data.equity.prices",
+        }
+    }
+
+    /// The capture-note tag: quarterly pulls carry a `-q` suffix so the
+    /// same statement's two cadences never collide in the capture index.
+    pub fn note_name(&self) -> String {
+        match self {
+            Self::IncomeQuarter | Self::BalanceQuarter | Self::CashFlowQuarter => {
+                format!("{}-q", self.path())
+            }
+            _ => self.path().to_string(),
         }
     }
 

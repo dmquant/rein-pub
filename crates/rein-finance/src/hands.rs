@@ -180,6 +180,27 @@ pub(crate) fn estimate_growth_path(
     ))
 }
 
+/// One planned section of a staged research run.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct ResearchSection {
+    pub title: String,
+    pub question: String,
+    #[serde(default)]
+    pub sources: Vec<u32>,
+}
+
+/// Parse the plan stage's reply: 1–6 sections or a stated refusal.
+pub(crate) fn parse_research_plan(v: &Value) -> Result<Vec<ResearchSection>, String> {
+    let mut sections: Vec<ResearchSection> =
+        serde_json::from_value(v.get("sections").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("plan did not parse: {e}"))?;
+    if sections.is_empty() {
+        return Err("plan carries no sections".into());
+    }
+    sections.truncate(6);
+    Ok(sections)
+}
+
 /// Deep-research assembly: the model returns markdown + claims citing
 /// numbered sources; the ADAPTER maps every `[N]` onto the N-th pinned
 /// input's real digest and computes the coverage arithmetic. The model
@@ -787,20 +808,32 @@ impl AgyHand {
         })
     }
 
-    /// A bare prompted call OUTSIDE any attempt — the external judge's path
-    /// (`rein eval grade`). No receipts, no retries; an empty or non-SUCCESS
-    /// response is an error regardless of exit code.
-    pub fn prompt_once(&self, prompt: &str) -> Result<String, HandError> {
-        let out = std::process::Command::new(&self.binary)
-            .arg("--model")
+    /// One agy process invocation: prompt in, decoded envelope out, raw
+    /// stdout preserved for the event stream. No retries (invariant 11) —
+    /// the staged research path is a workflow of distinct calls, never a
+    /// retry loop.
+    fn agy_invoke(
+        &self,
+        prompt: &str,
+        schema: Option<&Value>,
+        env: &BTreeMap<String, String>,
+    ) -> Result<(String, Vec<u8>, Option<i32>), HandError> {
+        let mut cmd = std::process::Command::new(&self.binary);
+        cmd.arg("--model")
             .arg(&self.model)
-            .args(["--output-format", "json"])
+            .args(["--output-format", "json"]);
+        if let Some(schema) = schema {
+            cmd.arg("--json-schema")
+                .arg(serde_json::to_string(schema).expect("schema serializes"));
+        }
+        let out = cmd
             .arg("--print-timeout")
             .arg(format!("{}s", self.timeout_s))
             .arg("--print")
             .arg(prompt)
             .current_dir(&self.workdir)
             .stdin(std::process::Stdio::null())
+            .envs(env)
             .output()
             .map_err(|e| HandError::Failed {
                 hand: "agy".into(),
@@ -822,7 +855,7 @@ impl AgyHand {
             .map_or(!text.is_empty(), |s| s == "SUCCESS")
             && !text.is_empty();
         if ok {
-            Ok(text)
+            Ok((text, out.stdout, out.status.code()))
         } else {
             let stderr: String = String::from_utf8_lossy(&out.stderr)
                 .chars()
@@ -831,11 +864,228 @@ impl AgyHand {
             Err(HandError::Failed {
                 hand: format!("agy:{}", self.model),
                 detail: format!(
-                    "judge call failed: status {status:?}, exit {:?}, stderr: {stderr}",
+                    "agy call failed: status {status:?}, exit {:?}, stderr: {stderr}",
                     out.status.code()
                 ),
             })
         }
+    }
+
+    /// A bare prompted call OUTSIDE any attempt — the external judge's path
+    /// (`rein eval grade`). No receipts, no retries; an empty or non-SUCCESS
+    /// response is an error regardless of exit code.
+    pub fn prompt_once(&self, prompt: &str) -> Result<String, HandError> {
+        self.agy_invoke(prompt, None, &BTreeMap::new())
+            .map(|(text, _, _)| text)
+    }
+
+    fn research_output_schema() -> Value {
+        serde_json::json!({
+            "type": "object",
+            "required": ["dossier_md", "claims"],
+            "properties": {
+                "dossier_md": {"type": "string"},
+                "claims": {"type": "array", "items": {
+                    "type": "object",
+                    "required": ["text", "kind", "evidence"],
+                    "properties": {
+                        "text": {"type": "string"},
+                        "kind": {"enum": ["fact", "forecast", "scenario"]},
+                        "about_time": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "integer"}},
+                        "falsifier": {"type": "string"}
+                    }
+                }}
+            }
+        })
+    }
+
+    /// The staged deep-research path (ported from a studied sibling
+    /// researcher): plan → per-section investigation → synthesis. One
+    /// attempt, several distinct model calls — every call's raw stdout
+    /// rides the event stream, and the method text comes from the pack's
+    /// system instructions (`system.md`), which the pack hash binds.
+    fn run_research(&self, ctx: &HandContext<'_>) -> Result<HandRunOutcome, HandError> {
+        std::fs::create_dir_all(&self.workdir).map_err(|source| HandError::Io {
+            path: self.workdir.clone(),
+            source,
+        })?;
+        let mut events = Vec::new();
+        let mut seq = 0u64;
+        let mut push = |at: u64, event: HandEvent, events: &mut Vec<SequencedEvent>| {
+            events.push(SequencedEvent {
+                run_id: ctx.request.run_id.clone(),
+                seq,
+                at: LogicalMs(at),
+                event,
+            });
+            seq += 1;
+        };
+        push(
+            0,
+            HandEvent::RunStarted {
+                identity: ModelIdentity {
+                    requested: self.model.clone(),
+                    served: format!("{} (staged deep research)", self.model),
+                },
+                attempts: 1,
+            },
+            &mut events,
+        );
+
+        let system = std::fs::read_to_string(ctx.inputs_dir.join("system.md")).unwrap_or_default();
+        let inputs = read_inputs_manifest(ctx.inputs_dir);
+        if inputs.is_empty() {
+            return Err(HandError::Failed {
+                hand: format!("agy:{}", self.model),
+                detail: "deep research without pinned sources — nothing to cite".into(),
+            });
+        }
+        let read_source = |e: &InputEntry, clip: usize| -> String {
+            std::fs::read_to_string(ctx.inputs_dir.join(&e.file))
+                .unwrap_or_default()
+                .chars()
+                .take(clip)
+                .collect()
+        };
+
+        // Stage 1 — triage and plan over source heads.
+        let mut catalogue = String::new();
+        for (i, e) in inputs.iter().enumerate() {
+            catalogue.push_str(&format!(
+                "\n--- source [{}] ({})\n{}\n",
+                i + 1,
+                e.note,
+                read_source(e, 1500)
+            ));
+        }
+        let plan_schema = serde_json::json!({
+            "type": "object",
+            "required": ["sections"],
+            "properties": {"sections": {"type": "array", "items": {
+                "type": "object",
+                "required": ["title", "question"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "question": {"type": "string"},
+                    "sources": {"type": "array", "items": {"type": "integer"}}
+                }
+            }}}
+        });
+        let plan_prompt = format!(
+            "{system}\n\nSTAGE 1 of the method above: triage and plan. Read the numbered source catalogue (heads only) and emit raw JSON {{\"sections\":[{{\"title\":…,\"question\":…,\"sources\":[<source numbers bearing on it>]}}]}} — 3 to 6 granular, data-driven sections per the method. No prose outside the JSON.\n{catalogue}"
+        );
+        let (plan_text, plan_raw, _) =
+            self.agy_invoke(&plan_prompt, Some(&plan_schema), ctx.env)?;
+        push(
+            1,
+            HandEvent::OutputChunk {
+                stream: rein_core::capture::StdStream::Stdout,
+                bytes: plan_raw,
+            },
+            &mut events,
+        );
+        let plan_json = extract_trailing_json(&plan_text).ok_or_else(|| HandError::Failed {
+            hand: format!("agy:{}", self.model),
+            detail: "plan stage returned no JSON".into(),
+        })?;
+        let sections = parse_research_plan(&plan_json).map_err(|e| HandError::Failed {
+            hand: format!("agy:{}", self.model),
+            detail: format!("plan stage: {e}"),
+        })?;
+
+        // Stage 2 — one focused investigation per section, full-length
+        // access to the sources that bear on it.
+        let mut section_notes = String::new();
+        let mut last_exit = None;
+        for (si, sec) in sections.iter().enumerate() {
+            let hinted: Vec<usize> = if sec.sources.is_empty() {
+                (1..=inputs.len()).collect()
+            } else {
+                sec.sources
+                    .iter()
+                    .filter_map(|n| {
+                        let i = *n as usize;
+                        (i >= 1 && i <= inputs.len()).then_some(i)
+                    })
+                    .collect()
+            };
+            let clip = if hinted.len() <= 3 { 18000 } else { 8000 };
+            let mut src = String::new();
+            for i in &hinted {
+                let e = &inputs[i - 1];
+                src.push_str(&format!(
+                    "\n--- source [{}] ({})\n{}\n",
+                    i,
+                    e.note,
+                    read_source(e, clip)
+                ));
+            }
+            let section_prompt = format!(
+                "STAGE 2 of a staged deep-research method: investigate ONE section in depth, from the sources alone.\nSection: {}\nQuestion: {}\nRules: specific figures with period labels and the deltas that give them meaning; short direct transcript quotes where the wording matters; note any gap between management tone and the numbers; every factual sentence carries an inline citation [N] to the numbered sources shown; copy numbers exactly; if the sources cannot answer, say so plainly. Write the section as markdown (no code fences).\n{src}",
+                sec.title, sec.question
+            );
+            let (sec_text, sec_raw, sec_exit) = self.agy_invoke(&section_prompt, None, ctx.env)?;
+            push(
+                2 + si as u64,
+                HandEvent::OutputChunk {
+                    stream: rein_core::capture::StdStream::Stdout,
+                    bytes: sec_raw,
+                },
+                &mut events,
+            );
+            last_exit = sec_exit;
+            let clipped: String = sec_text.chars().take(12000).collect();
+            section_notes.push_str(&format!("\n\n## [{}] {}\n{}\n", si + 1, sec.title, clipped));
+        }
+
+        // Stage 3 — synthesis into the dossier + claims contract.
+        let mut source_list = String::new();
+        for (i, e) in inputs.iter().enumerate() {
+            source_list.push_str(&format!("[{}] {}\n", i + 1, e.note));
+        }
+        let synth_prompt = format!(
+            "{system}\n\nSTAGE 3 of the method above: synthesize. Below are the per-section investigations (already cited with [N] against the same numbered source list) and the source catalogue (notes only).\nProduce raw JSON {{\"dossier_md\":…, \"claims\":[…]}}. dossier_md is the full dossier per the method: an executive summary; thematic sections that CONNECT findings across sources; a dedicated earnings-call analysis when transcripts are among the sources; bull/base/bear scenarios each with concrete catalysts AND a stated falsifier; keywords at the end. Keep every [N] citation intact and valid — only numbers from the source list. claims: 6 to 14 load-bearing claims {{\"text\",\"kind\":\"fact\"|\"forecast\"|\"scenario\",\"evidence\":[N…],\"falsifier\"}} — facts need evidence, forecasts and scenarios need falsifiers.\n\nSources:\n{source_list}\nSection investigations:\n{section_notes}"
+        );
+        let (synth_text, synth_raw, synth_exit) = self.agy_invoke(
+            &synth_prompt,
+            Some(&Self::research_output_schema()),
+            ctx.env,
+        )?;
+        push(
+            20,
+            HandEvent::OutputChunk {
+                stream: rein_core::capture::StdStream::Stdout,
+                bytes: synth_raw,
+            },
+            &mut events,
+        );
+        let synth_json = extract_trailing_json(&synth_text).ok_or_else(|| HandError::Failed {
+            hand: format!("agy:{}", self.model),
+            detail: "synthesis stage returned no JSON".into(),
+        })?;
+        let (dossier, claims) =
+            assemble_research_artifacts(&synth_json, &inputs).map_err(|e| HandError::Failed {
+                hand: format!("agy:{}", self.model),
+                detail: format!("synthesis stage: {e}"),
+            })?;
+        let mut claimed = BTreeMap::new();
+        write_artifact(
+            ctx.output_dir,
+            "dossier.md",
+            dossier.as_bytes(),
+            &mut claimed,
+        )?;
+        let bytes = serde_json::to_vec_pretty(&claims).expect("serializes");
+        write_artifact(ctx.output_dir, "claims.json", &bytes, &mut claimed)?;
+        push(
+            21,
+            HandEvent::RunCompleted {
+                child_exit: synth_exit.or(last_exit),
+            },
+            &mut events,
+        );
+        Ok(HandRunOutcome { events, claimed })
     }
 
     fn prompt_for(&self, ctx: &HandContext<'_>) -> String {
@@ -933,32 +1183,16 @@ impl RuntimeHand for AgyHand {
         })?;
         // Q&A mode (benchmark answers): free-text response, no JSON schema.
         let answer_mode = wants_answer(ctx);
-        let research_mode = ctx
+        // Deep research runs the staged method — its own path entirely.
+        if ctx
             .contract
             .required_artifacts
             .iter()
-            .any(|a| a.name == "dossier.md");
-        let prompt = if research_mode {
-            let inputs = read_inputs_manifest(ctx.inputs_dir);
-            let mut sources = String::new();
-            for (i, e) in inputs.iter().enumerate() {
-                let body =
-                    std::fs::read_to_string(ctx.inputs_dir.join(&e.file)).unwrap_or_default();
-                let clipped: String = body.chars().take(4000).collect();
-                sources.push_str(&format!(
-                    "\n--- source [{}] ({})\n{}\n",
-                    i + 1,
-                    e.note,
-                    clipped
-                ));
-            }
-            format!(
-                "You are a deep-research hand inside the Rein harness. Do not run commands or use tools — work ONLY from the numbered sources below.\n\
-                 Produce raw JSON (no markdown fences): one object with keys `dossier_md` and `claims`.\n\
-                 `dossier_md`: a thorough analytical research dossier in markdown. Every factual statement drawn from a source MUST carry an inline citation like [1] or [3] referring to the numbered sources — a citation number you were not given is invalid. Never state anything after the task's knowledge cutoff as fact; label projections as forecasts.\n\
-                 `claims`: an array of the dossier's load-bearing claims, each {{\"text\":…, \"kind\":\"fact\"|\"forecast\"|\"scenario\", \"evidence\":[<source numbers>], \"falsifier\":\"<what observable outcome would refute this claim>\"}}. Facts need evidence; forecasts need falsifiers.\n{sources}"
-            )
-        } else if answer_mode {
+            .any(|a| a.name == "dossier.md")
+        {
+            return self.run_research(ctx);
+        }
+        let prompt = if answer_mode {
             let (question, cutoff) = pinned_question(ctx).unwrap_or_else(|| {
                 (
                     "(no pinned question found in inputs)".to_string(),
@@ -978,29 +1212,7 @@ impl RuntimeHand for AgyHand {
         cmd.arg("--model")
             .arg(&self.model)
             .args(["--output-format", "json"]);
-        if research_mode {
-            cmd.arg("--json-schema").arg(
-                serde_json::to_string(&serde_json::json!({
-                    "type": "object",
-                    "required": ["dossier_md", "claims"],
-                    "properties": {
-                        "dossier_md": {"type": "string"},
-                        "claims": {"type": "array", "items": {
-                            "type": "object",
-                            "required": ["text", "kind", "evidence"],
-                            "properties": {
-                                "text": {"type": "string"},
-                                "kind": {"enum": ["fact", "forecast", "scenario"]},
-                                "about_time": {"type": "string"},
-                                "evidence": {"type": "array", "items": {"type": "integer"}},
-                                "falsifier": {"type": "string"}
-                            }
-                        }}
-                    }
-                }))
-                .expect("static schema"),
-            );
-        } else if !answer_mode {
+        if !answer_mode {
             cmd.arg("--json-schema")
                 .arg(serde_json::to_string(&Self::output_schema()).expect("static schema"));
         }
@@ -1075,29 +1287,7 @@ impl RuntimeHand for AgyHand {
             .map_or(!text.is_empty(), |s| s == "SUCCESS")
             && !text.is_empty();
         let mut claimed = BTreeMap::new();
-        if ok && research_mode {
-            let inputs = read_inputs_manifest(ctx.inputs_dir);
-            match extract_trailing_json(&text)
-                .ok_or_else(|| "no JSON object in model response".to_string())
-                .and_then(|j| assemble_research_artifacts(&j, &inputs))
-            {
-                Ok((dossier, claims)) => {
-                    write_artifact(
-                        ctx.output_dir,
-                        "dossier.md",
-                        dossier.as_bytes(),
-                        &mut claimed,
-                    )?;
-                    let bytes = serde_json::to_vec_pretty(&claims).expect("serializes");
-                    write_artifact(ctx.output_dir, "claims.json", &bytes, &mut claimed)?;
-                }
-                Err(detail) => {
-                    // Nothing staged: the classifier records artifact_invalid
-                    // with the required artifacts absent — stated, not smoothed.
-                    let _ = detail;
-                }
-            }
-        } else if ok && answer_mode {
+        if ok && answer_mode {
             // The response text IS the answer artifact.
             write_artifact(ctx.output_dir, "answer.md", text.as_bytes(), &mut claimed)?;
         } else if ok {
@@ -1564,5 +1754,33 @@ mod research_tests {
     fn empty_dossier_is_a_refusal() {
         let model = serde_json::json!({"dossier_md": "  ", "claims": []});
         assert!(assemble_research_artifacts(&model, &inputs()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod research_plan_tests {
+    use super::*;
+
+    #[test]
+    fn plan_parses_caps_and_refuses() {
+        let v = serde_json::json!({"sections": [
+            {"title": "Margins", "question": "What moved margins?", "sources": [2, 3]},
+            {"title": "Guidance", "question": "What changed?"}
+        ]});
+        let s = parse_research_plan(&v).unwrap();
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].sources, vec![2, 3]);
+        assert!(s[1].sources.is_empty(), "hints default to empty = all");
+
+        // More than six sections truncate to six.
+        let many: Vec<_> = (0..9)
+            .map(|i| serde_json::json!({"title": format!("s{i}"), "question": "q"}))
+            .collect();
+        let v = serde_json::json!({ "sections": many });
+        assert_eq!(parse_research_plan(&v).unwrap().len(), 6);
+
+        // No sections is a refusal, never a default.
+        assert!(parse_research_plan(&serde_json::json!({"sections": []})).is_err());
+        assert!(parse_research_plan(&serde_json::json!({})).is_err());
     }
 }

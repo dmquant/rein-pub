@@ -106,6 +106,11 @@ impl<'a> CaptureStore<'a> {
             | EquityEndpoint::CashFlow => {
                 vec![("symbol", symbol), ("period", "annual"), ("limit", "5")]
             }
+            EquityEndpoint::IncomeQuarter
+            | EquityEndpoint::BalanceQuarter
+            | EquityEndpoint::CashFlowQuarter => {
+                vec![("symbol", symbol), ("period", "quarter"), ("limit", "8")]
+            }
             EquityEndpoint::AnalystEstimates => vec![
                 ("symbol", symbol),
                 ("period", "annual"),
@@ -134,7 +139,7 @@ impl<'a> CaptureStore<'a> {
             host: Some("financialmodelingprep.com".to_string()),
             note: Some(format!(
                 "fmp:{}:{symbol}{}",
-                endpoint.path(),
+                endpoint.note_name(),
                 served_version
                     .as_deref()
                     .map(|v| format!(" served-version={v}"))
@@ -147,6 +152,105 @@ impl<'a> CaptureStore<'a> {
             rows,
             served_version,
         })
+    }
+
+    /// Pull the last-N earnings-call transcripts: the dates index first
+    /// (fiscal year + quarter per row), then each transcript. Every response
+    /// is captured; each transcript's as-of is the call date itself.
+    pub fn pull_transcripts(
+        &mut self,
+        client: &FmpClient,
+        symbol: &str,
+        epoch: &Epoch,
+        now: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<(Sha256Digest, String)>, CaptureError> {
+        ensure_live_permitted(epoch, now)?;
+        let (idx_bytes, idx_version) =
+            client.get_raw("earning-call-transcript-dates", &[("symbol", symbol)])?;
+        let idx_digest = self.cas.put(&idx_bytes)?;
+        self.store.insert_capture(&CaptureRow {
+            digest: idx_digest.clone(),
+            tool: "data.equity.transcripts".to_string(),
+            params: format!("symbol={symbol}&endpoint=earning-call-transcript-dates"),
+            provider: "Financial Modeling Prep".to_string(),
+            media_type: "application/json".to_string(),
+            as_of: None,
+            as_of_basis: None,
+            retrieved_at: now,
+            url: None,
+            host: Some("financialmodelingprep.com".to_string()),
+            note: Some(format!(
+                "fmp:transcript-dates:{symbol}{}",
+                idx_version
+                    .as_deref()
+                    .map(|v| format!(" served-version={v}"))
+                    .unwrap_or_default()
+            )),
+        })?;
+
+        let mut out = vec![(idx_digest, format!("transcript-dates:{symbol}"))];
+        let idx: Value = serde_json::from_slice(&idx_bytes).unwrap_or(Value::Null);
+        let rows = idx.as_array().cloned().unwrap_or_default();
+        let mut taken = 0usize;
+        for row in rows {
+            if taken >= limit {
+                break;
+            }
+            let (Some(q), Some(fy), Some(date)) = (
+                row.get("quarter").and_then(Value::as_u64),
+                row.get("fiscalYear").and_then(Value::as_u64),
+                row.get("date").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            // Only calls that have already happened — the index lists the
+            // scheduled future too.
+            let Some(call_at) = Timestamp::parse(&format!("{date}T00:00:00Z")).ok() else {
+                continue;
+            };
+            if call_at > now {
+                continue;
+            }
+            let year = fy.to_string();
+            let quarter = q.to_string();
+            let (bytes, _v) = client.get_raw(
+                "earning-call-transcript",
+                &[("symbol", symbol), ("year", &year), ("quarter", &quarter)],
+            )?;
+            // An empty or contentless reply is skipped, stated via the label
+            // list the caller reports — never captured as if it were a call.
+            let parsed: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            let has_content = parsed
+                .get(0)
+                .and_then(|r| r.get("content"))
+                .and_then(Value::as_str)
+                .is_some_and(|c| !c.trim().is_empty());
+            if !has_content {
+                continue;
+            }
+            let digest = self.cas.put(&bytes)?;
+            self.store.insert_capture(&CaptureRow {
+                digest: digest.clone(),
+                tool: "data.equity.transcripts".to_string(),
+                params: format!(
+                    "symbol={symbol}&endpoint=earning-call-transcript&year={year}&quarter={quarter}"
+                ),
+                provider: "Financial Modeling Prep".to_string(),
+                media_type: "application/json".to_string(),
+                as_of: Some(call_at),
+                as_of_basis: Some("provider".to_string()),
+                retrieved_at: now,
+                url: None,
+                host: Some("financialmodelingprep.com".to_string()),
+                note: Some(format!(
+                    "fmp:earning-call-transcript:{symbol}:Q{quarter}FY{year}"
+                )),
+            })?;
+            out.push((digest, format!("Q{quarter}FY{year}")));
+            taken += 1;
+        }
+        Ok(out)
     }
 
     /// Capture a fetched web page (research.visit). Applies the host cap.
@@ -259,10 +363,15 @@ fn extract_stamped(
         }
         EquityEndpoint::IncomeStatement
         | EquityEndpoint::BalanceSheet
-        | EquityEndpoint::CashFlow => {
+        | EquityEndpoint::CashFlow
+        | EquityEndpoint::IncomeQuarter
+        | EquityEndpoint::BalanceQuarter
+        | EquityEndpoint::CashFlowQuarter => {
             let keys: &[(&str, &str)] = match endpoint {
-                EquityEndpoint::IncomeStatement => &[("revenue", "revenue"), ("ebitda", "ebitda")],
-                EquityEndpoint::BalanceSheet => &[
+                EquityEndpoint::IncomeStatement | EquityEndpoint::IncomeQuarter => {
+                    &[("revenue", "revenue"), ("ebitda", "ebitda")]
+                }
+                EquityEndpoint::BalanceSheet | EquityEndpoint::BalanceQuarter => &[
                     ("total_debt", "totalDebt"),
                     ("cash", "cashAndCashEquivalents"),
                     ("minority_interest", "minorityInterest"),

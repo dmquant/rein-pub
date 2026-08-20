@@ -376,6 +376,20 @@ impl<'a> Engine<'a> {
             serde_json::to_vec_pretty(&manifest_entries).expect("manifest serializes"),
         )
         .map_err(io_err(manifest_path))?;
+        // The pack's system instructions (the task-type skill body) travel
+        // into the sandbox too: hands read the method from `system.md`, and
+        // the pack hash already binds its exact bytes.
+        if let Ok(sys_digest) = Sha256Digest::parse(
+            pack.instructions
+                .system_ref
+                .as_str()
+                .trim_start_matches("artifact:"),
+        ) {
+            if let Ok(sys_bytes) = self.cas.read_verified(&sys_digest) {
+                let sys_path = inputs_dir.join("system.md");
+                std::fs::write(&sys_path, sys_bytes).map_err(io_err(sys_path))?;
+            }
+        }
         let mut env_notes = vec![
             "non-coverage: egress exfiltration, reads outside $HOME, wrong-file-inside-root (byte-reading validation runs regardless), anything after exit (§7)".to_string(),
             format!("inputs mounted read-only: {}", pack.inputs.len()),
