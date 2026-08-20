@@ -1742,7 +1742,7 @@ pub fn skill_validate(ctx: &Ctx, name: &str) -> CmdResult {
 }
 
 pub fn skill_new(ctx: &Ctx, name: &str, applies_to: &str, from_attempts: &[String]) -> CmdResult {
-    let (ws, mut store) = ctx.open()?;
+    let (ws, store) = ctx.open()?;
     // Evidence: outcomes and validator verdicts from the named attempts —
     // the lessons a generated skill must distill, cited by attempt id.
     let mut evidence = String::new();
