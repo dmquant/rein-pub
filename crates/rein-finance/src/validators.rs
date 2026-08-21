@@ -517,9 +517,33 @@ impl ArtifactValidator for FactVsForecast {
             // invariant 14 protects. The claims.json face stays fully
             // strict (kind=fact past the cutoff fails regardless), and
             // citation existence is citation-closure's to enforce.
+            //
+            // Second diagnosis (2026-08-21, after two further failures on
+            // legitimate shapes): the rule is line-local, but markdown is
+            // not. A scenario table row inherits its marking from the table
+            // HEADER; a "Keywords and Tags" line asserts nothing at all.
+            // The prose rule therefore applies to PROSE — structural
+            // markdown is skipped, and the claims.json face (fully strict,
+            // untouched) remains the authoritative semantic check.
+            //
+            // STANDING RETIREMENT TRIGGER: if this prose face fires falsely
+            // once more on a legitimate document, it is demoted to a warning
+            // and enforcement rests solely on claims.json. A heuristic that
+            // needs a third exception list has earned its retirement.
             let cutoff_year: i32 = self.cutoff.canonical()[..4].parse().unwrap_or(9999);
             let text = String::from_utf8_lossy(input.bytes);
+            let mut in_fence = false;
             for (i, line) in text.lines().enumerate() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("```") {
+                    in_fence = !in_fence;
+                    continue;
+                }
+                // Structure, not prose: fenced code, table rows (the marking
+                // lives in the header row), and backtick-dominant tag lists.
+                if in_fence || trimmed.starts_with('|') || is_tag_list(line) {
+                    continue;
+                }
                 let lower = line.to_lowercase();
                 // "falsifier" and "catalyst" are the method's own required
                 // vocabulary for future-conditional lines — the contract
@@ -572,6 +596,28 @@ impl ArtifactValidator for FactVsForecast {
         }
         ValidatorVerdict::Passed
     }
+}
+
+/// A keyword/tag line: backticked spans cover most of the line's non-space
+/// characters. Such a line enumerates terms; it asserts nothing, so a year
+/// inside it is a label, not a claim about time.
+fn is_tag_list(line: &str) -> bool {
+    let non_space = line.chars().filter(|c| !c.is_whitespace()).count();
+    if non_space < 12 {
+        return false;
+    }
+    let mut inside = false;
+    let mut covered = 0usize;
+    for c in line.chars() {
+        if c == '`' {
+            inside = !inside;
+            continue;
+        }
+        if inside && !c.is_whitespace() {
+            covered += 1;
+        }
+    }
+    covered * 2 > non_space
 }
 
 // ---- citation-closure -------------------------------------------------------

@@ -653,6 +653,60 @@ fn inv14__fact_vs_forecast__post_cutoff_fact_fails() {
         },
     );
     assert!(matches!(v_fals, ValidatorVerdict::Passed), "{v_fals:?}");
+    // Structure is not prose (second diagnosis, 2026-08-21): a scenario
+    // TABLE ROW inherits its marking from the header row …
+    let memo_table = b"| Bear | agentic surge stalls | drops below 66.00% in FY2027 |".to_vec();
+    let v_table = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_table,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(matches!(v_table, ValidatorVerdict::Passed), "{v_table:?}");
+    // … a keyword/tag line asserts nothing …
+    let memo_tags =
+        b"`AAPL`, `Apple Silicon M5`, `Capital Allocation`, `Consensus Estimates FY2027-FY2030`."
+            .to_vec();
+    let v_tags = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_tags,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(matches!(v_tags, ValidatorVerdict::Passed), "{v_tags:?}");
+    // … and fenced code is not an assertion either.
+    let memo_fence = b"```\nrevenue_2029 = 1000\n```".to_vec();
+    let v_fence = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_fence,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(matches!(v_fence, ValidatorVerdict::Passed), "{v_fence:?}");
+    // The unfalsifiable prose assertion still dies — the protection is intact.
+    let memo_still = b"Revenue reaches $400B in 2029.".to_vec();
+    let v_still = reg.run(
+        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+        &rein_runtime::validators::ValidationInput {
+            artifact: &artifact_md,
+            bytes: &memo_still,
+            all_artifacts: &all,
+            pack: &pack,
+        },
+    );
+    assert!(
+        matches!(v_still, ValidatorVerdict::Failed { .. }),
+        "{v_still:?}"
+    );
 }
 
 /// Invariants 17/18 — a citation resolves to captured bytes or fails; a word
