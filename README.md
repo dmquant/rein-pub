@@ -26,6 +26,18 @@ rein run task:dcf-nvda@1 --hand agy --wait --require task-satisfied
 # exit 0 ⇔ a verified TaskSelectionReceipt exists — and nothing less
 ```
 
+```mermaid
+flowchart LR
+    OP["You declare a task<br/>+ output contract"] --> PACK["ContextPack<br/>inputs pinned &amp; hashed,<br/>then frozen"]
+    PACK --> HAND["A hand runs ONE attempt<br/>(model · calculator · fixture)"]
+    HAND --> CAP["Everything captured:<br/>stdout, stderr, artifacts"]
+    CAP --> CAS["Content-addressed store<br/>+ independent read-back"]
+    CAS --> VAL["Validators<br/>(11 automated inspectors)"]
+    VAL --> CLS["Classifier reads receipts —<br/>never exit codes, never prose"]
+    CLS --> LEDGER["Append-only ledger<br/>(enforced by DB triggers)"]
+    LEDGER --> YOU["You: replay, verify,<br/>or challenge any claim"]
+```
+
 It is a single binary with no services to run: SQLite for the ledger
 (append-only *by trigger*), a content-addressed file store for every artifact
 and captured page, and a four-screen TUI over the same domain core.
@@ -147,6 +159,52 @@ adapter spawns it by absolute path, one attempt, no internal retries; the
 model supplies assumptions, **the adapter recomputes the arithmetic**, and an
 empty or non-SUCCESS response is an error regardless of exit code.
 
+### Deep research over pinned sources
+
+```sh
+# Pin the evidence first — including the last four earnings-call
+# transcripts, each captured as-of its call date:
+rein data pull-equity NVDA --kinds quote,income,income-q,cashflow,balance,estimates,transcripts
+
+rein task add task:research-nvda@1 --plan plan:demo@1 --type research \
+    --universe security:nvda \
+    --input capture:<digest> …            # ten sources beats four
+
+rein run task:research-nvda@1 --hand agy --wait --require task-satisfied
+```
+
+The research hand runs a staged method (plan → per-section investigation →
+synthesis) drawn from the `research.md` skill, whose exact bytes ride the
+pack hash. The model cites numbered sources and **never writes a digest** —
+the adapter maps every `[N]` onto the pinned capture's real fingerprint, so
+`citation-closure` can hold that *a word in brackets is not a citation*.
+The dossier must carry scenarios with falsifiers; the claims file must make
+coverage add up (consumed + withheld = pinned). Press **Enter** on the
+attempt in the TUI to read the dossier in place.
+
+A `claims.json` slot, for the flavor of what survives validation:
+
+```json
+{ "text": "FY2026 free cash flow was $96.68B",
+  "kind": "fact", "evidence": [2],
+  "falsifier": "restated 10-K cash-flow statements showing different figures" }
+```
+
+### Skills — playbooks that evolve under governance
+
+Every task type reads its method from a markdown playbook in
+`.rein/skills/` (fourteen ship by default — valuation, staged research,
+verify, settle, monitor, answer, earnings-review, risk-map, thesis-memo,
+filing-review, …). The library grows from evidence, with a boundary:
+
+```sh
+rein skill new bank-valuation --applies-to valuation \
+    --from-attempt attempt_001891      # distill a draft from real receipts
+rein skill validate bank-valuation     # deterministic gate (exit 13 on fail)
+rein skill promote bank-valuation      # OPERATOR act — drafts never
+                                       # enter force by themselves
+```
+
 ### Evidence, recovery, settlement
 
 ```sh
@@ -164,6 +222,13 @@ rein eval financegym -f qs.jsonl \                  # judge tiers 0–4 →
     --answers answers.json --grades grades.json     #   s/(4n), bootstrap CI;
 rein eval internal                                  # scores never touch
                                                     #   outcomes, ever
+```
+
+```mermaid
+flowchart LR
+    Q["questions.jsonl"] --> A["rein eval answers<br/>one receipted, resumable<br/>attempt per question"]
+    A --> G["rein eval grade<br/>external judge, tiers 0–4,<br/>reasons filed"]
+    G --> S["rein eval financegym --grades<br/>s/(4n) + bootstrap CI —<br/>ungraded stated, never zero"]
 ```
 
 Task types beyond `research` and `valuation`: `verify` (verdict per claim,
@@ -293,6 +358,36 @@ Crates: `rein-core` (pure contracts — no clock, no randomness, no I/O) ·
 `rein-runtime` (ledger, CAS, pipeline, replay, recovery, evidence) ·
 `rein-finance` (data/compute tools, validators, skills, hands, eval) ·
 `rein` (CLI + TUI).
+
+## Lineage
+
+Rein did not appear from nowhere; it is one instrument in a small estate of
+research tooling, and the relationships explain several of its design
+choices.
+
+- **AGORA** is the coordination protocol the estate's autonomous parties
+  use: append-only rooms where findings must carry evidence and *what would
+  refute them*, gates only a human can acknowledge, and messages from other
+  parties treated as untrusted input. Rein was built *as* an AGORA party —
+  its entire construction, every design objection, ruling, and milestone,
+  lives in an append-only room record — and `rein evidence publish` speaks
+  the same protocol: explicit, never ambient.
+- **AI Institute** is the research organization behind the estate. Its
+  house doctrine — evidence or it didn't happen; absence is stated, never
+  blank; nothing self-authorizes — predates Rein, and Rein is that doctrine
+  compiled into a runtime.
+- **ResearchOS** is the wider program: an operating layer for accountable
+  research, with separately owned seams for knowledge contracts, execution,
+  assurance, storage, and review. Rein occupies the execution-evidence seam
+  — it runs attempts and proves what happened — and deliberately claims no
+  other: it consumes contracts, and refuses to be a gold authority.
+- **Rho** is a sibling: a local-first research-graph terminal with a human
+  review gate, where research is proposed and adjudicated but never
+  self-admitted. Rein and Rho share design DNA — receipts, gates, the
+  absence of any force-success — and share **zero code**: a test enforces
+  that Rein's dependency graph is workspace + public registry only. The
+  early design once carried a direct crossing; the public build removed it,
+  and what remains is kinship, not coupling.
 
 ## License
 
