@@ -199,6 +199,69 @@ fn inv25__recovery_queue__stale_check_tolerates_the_boundarys_own_latency() {
     assert_eq!(queue2.len(), 1);
 }
 
+/// A hand that fails hard must not strand the attempt in limbo. Found in
+/// the field 2026-08-21: the `?` on the hand call discarded the in-memory
+/// receipts (including the transition to `running`), so the ledger's last
+/// word was `preparing` and the attempt was invisible until the staleness
+/// tolerance elapsed. Unknown stays unknown — but it stays unknown IN
+/// `recovery_pending`, where the three safe actions are, not in limbo.
+#[test]
+fn hand_failure__enters_recovery_pending_not_limbo() {
+    use rein_runtime::hands::{HandError, HandRunOutcome, RuntimeHand};
+
+    struct FailingHand;
+    impl RuntimeHand for FailingHand {
+        fn selector(&self) -> &str {
+            "fake:hard-failure"
+        }
+        fn run(
+            &self,
+            _ctx: &rein_runtime::hands::HandContext<'_>,
+        ) -> Result<HandRunOutcome, HandError> {
+            Err(HandError::Failed {
+                hand: "fake:hard-failure".into(),
+                detail: "provider returned ERROR with exit 0".into(),
+            })
+        }
+    }
+
+    let mut f = fixture();
+    let clock = FixedClock::new(t("2026-08-19T08:00:00Z"));
+    let err = {
+        let b = broker(&f);
+        let mut engine = Engine::new(&f.ws, &mut f.store, &clock, b);
+        engine.hands.register(Box::new(FailingHand));
+        engine
+            .run_task(&task(), Some("fake:hard-failure"), None)
+            .expect_err("a failing hand surfaces its error")
+    };
+    assert!(format!("{err}").contains("ERROR"), "{err}");
+
+    // The attempt exists, and it is NOT stuck mid-pipeline: it sits in
+    // recovery_pending with a typed anomaly, queued immediately — no waiting
+    // for a staleness timeout to discover it.
+    let attempts = f.store.list_attempts().unwrap();
+    let aid = attempts
+        .last()
+        .expect("an attempt was created")
+        .attempt_id
+        .clone();
+    let log = f.store.load_full_log().unwrap();
+    let state = rein_core::state::resolve_state(&log, &aid).unwrap();
+    assert_eq!(
+        state,
+        rein_core::state::AttemptState::RecoveryPending,
+        "a failed hand must not leave the attempt in limbo"
+    );
+    let queue =
+        recovery_queue(&f.store, t("2026-08-19T08:00:05Z"), DEFAULT_STALE_AFTER_MS).unwrap();
+    let entry = queue
+        .iter()
+        .find(|a| a.attempt_id == aid.as_str())
+        .expect("queued immediately, not after a timeout");
+    assert_eq!(entry.actions.len(), 3);
+}
+
 /// A recovery must not silently change the executor. Found in the field
 /// 2026-08-21: recovering a real research attempt re-ran it on the workspace
 /// default (a fixture hand) and reported artifact_invalid for a reason that

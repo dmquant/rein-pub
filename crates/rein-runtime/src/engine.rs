@@ -443,14 +443,44 @@ impl<'a> Engine<'a> {
         };
         let env = self.broker.env_for(&pack.capabilities.secrets);
         let hand = self.hands.get(&pack.hand.selector)?;
-        let hand_out = hand.run(&HandContext {
+        // A hand that fails hard must NOT strand the attempt. Found
+        // 2026-08-21: `?` here discarded the in-memory receipts — including
+        // the transition to `running` above — so the ledger's last word was
+        // `preparing` and the attempt sat in limbo forever, invisible until
+        // the staleness tolerance elapsed. The recovery console exists so no
+        // attempt is ever in limbo; the engine must not manufacture it.
+        //
+        // On failure: enter `recovery_pending` with a typed anomaly
+        // (`unknown_after_disconnect` — the hand died and what it did is
+        // genuinely unknown), persist everything, and only then surface the
+        // error. Unknown stays unknown; the operator gets the three safe
+        // actions immediately instead of after a timeout.
+        let hand_out = match hand.run(&HandContext {
             request: &request,
             contract: &pack.output_contract,
             budget: &pack.budget,
             inputs_dir: &inputs_dir,
             output_dir: &output_dir,
             env: &env,
-        })?;
+        }) {
+            Ok(out) => out,
+            Err(hand_err) => {
+                rein_core::state::apply_transition(
+                    log,
+                    ids,
+                    aid,
+                    AttemptState::RecoveryPending,
+                    rein_core::state::TransitionCauseRecord::RecoveryEntered {
+                        anomaly: AnomalyKind::UnknownAfterDisconnect,
+                    },
+                    self.clock.now(),
+                )?;
+                self.store.persist_receipts_from(log, *persisted)?;
+                *persisted = log.len();
+                self.store.save_id_gen(ids)?;
+                return Err(EngineError::Hand(hand_err));
+            }
+        };
 
         // Ingest events: duplicates idempotent, gaps surfaced, conflicts are
         // a typed anomaly, never absorbed.
