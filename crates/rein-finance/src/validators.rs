@@ -506,118 +506,35 @@ impl ArtifactValidator for FactVsForecast {
             }
             return ValidatorVerdict::Passed;
         }
-        if input.artifact.media_type == "text/markdown" {
-            // Deterministic prose rule, boundary recorded 2026-08-20 after
-            // three same-validator failures on legitimate shapes (bare
-            // fiscal fact, cited fiscal quarter, cited management-forward
-            // statement): the deadly form of the 2027-claim class is the
-            // UNFALSIFIABLE one. An unmarked, uncited post-cutoff year
-            // fails; a line carrying a [N] citation delegates to its
-            // captured source — checkable evidence, which is what
-            // invariant 14 protects. The claims.json face stays fully
-            // strict (kind=fact past the cutoff fails regardless), and
-            // citation existence is citation-closure's to enforce.
-            //
-            // Second diagnosis (2026-08-21, after two further failures on
-            // legitimate shapes): the rule is line-local, but markdown is
-            // not. A scenario table row inherits its marking from the table
-            // HEADER; a "Keywords and Tags" line asserts nothing at all.
-            // The prose rule therefore applies to PROSE — structural
-            // markdown is skipped, and the claims.json face (fully strict,
-            // untouched) remains the authoritative semantic check.
-            //
-            // STANDING RETIREMENT TRIGGER: if this prose face fires falsely
-            // once more on a legitimate document, it is demoted to a warning
-            // and enforcement rests solely on claims.json. A heuristic that
-            // needs a third exception list has earned its retirement.
-            let cutoff_year: i32 = self.cutoff.canonical()[..4].parse().unwrap_or(9999);
-            let text = String::from_utf8_lossy(input.bytes);
-            let mut in_fence = false;
-            for (i, line) in text.lines().enumerate() {
-                let trimmed = line.trim_start();
-                if trimmed.starts_with("```") {
-                    in_fence = !in_fence;
-                    continue;
-                }
-                // Structure, not prose: fenced code, table rows (the marking
-                // lives in the header row), and backtick-dominant tag lists.
-                if in_fence || trimmed.starts_with('|') || is_tag_list(line) {
-                    continue;
-                }
-                let lower = line.to_lowercase();
-                // "falsifier" and "catalyst" are the method's own required
-                // vocabulary for future-conditional lines — the contract
-                // demands those lines exist, so the rule must know them.
-                let marked = [
-                    "forecast",
-                    "scenario",
-                    "expect",
-                    "project",
-                    "assum",
-                    "reported",
-                    "ended",
-                    "falsifier",
-                    "catalyst",
-                ]
-                .iter()
-                .any(|m| lower.contains(m));
-                if marked {
-                    continue;
-                }
-                let cited = {
-                    let b = lower.as_bytes();
-                    let mut found = false;
-                    let mut j = 0;
-                    while j + 1 < b.len() {
-                        if b[j] == b'[' && b[j + 1].is_ascii_digit() {
-                            found = true;
-                            break;
-                        }
-                        j += 1;
-                    }
-                    found
-                };
-                if cited {
-                    continue;
-                }
-                for token in line.split(|c: char| !c.is_ascii_digit()) {
-                    if token.len() == 4 {
-                        if let Ok(y) = token.parse::<i32>() {
-                            if (2000..=2100).contains(&y) && y > cutoff_year {
-                                return fail(format!(
-                                    "line {}: year {y} stated without forecast/scenario marking or a citation, past cutoff year {cutoff_year} (invariant 14) — an uncited post-cutoff assertion is unfalsifiable",
-                                    i + 1
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // ---- the prose face is RETIRED (2026-08-21) --------------------
+        //
+        // A line-local lint cannot classify analyst prose about time, and the
+        // record proves it: after two diagnoses and two exception lists, this
+        // face false-fired on SEVEN legitimate shapes — a bare fiscal fact, a
+        // cited reported fiscal quarter, a cited management-forward statement,
+        // the method's own falsifier line, a scenario table row, a keyword
+        // list, and finally a section HEADING ("### Consensus Growth Model
+        // (FY2027–FY2030)") whose prose beneath it was impeccably marked and
+        // cited. Each fix bought one shape and the next document found
+        // another.
+        //
+        // The standing retirement trigger recorded in this file on the second
+        // diagnosis said: one more false fire and this face is demoted. It
+        // fired. Honoring a trigger only when it is cheap would make writing
+        // triggers theatre, so enforcement of invariant 14 now rests entirely
+        // on the claims.json face above — which is exact: a claim declares
+        // `kind` and `about_time`, and a fact past the cutoff fails, with no
+        // heuristics and nothing to except.
+        //
+        // What was lost: free-text prose is no longer scanned at all. The
+        // harness has no ADVISORY verdict — the vocabulary is Passed |
+        // Failed | Quarantined — so a non-blocking observation cannot be
+        // recorded today. That gap is proposed as a design question in the
+        // build room rather than fixed by quietly widening a closed
+        // vocabulary. If an advisory channel is adopted, this scan returns
+        // as advice, never again as a gate.
         ValidatorVerdict::Passed
     }
-}
-
-/// A keyword/tag line: backticked spans cover most of the line's non-space
-/// characters. Such a line enumerates terms; it asserts nothing, so a year
-/// inside it is a label, not a claim about time.
-fn is_tag_list(line: &str) -> bool {
-    let non_space = line.chars().filter(|c| !c.is_whitespace()).count();
-    if non_space < 12 {
-        return false;
-    }
-    let mut inside = false;
-    let mut covered = 0usize;
-    for c in line.chars() {
-        if c == '`' {
-            inside = !inside;
-            continue;
-        }
-        if inside && !c.is_whitespace() {
-            covered += 1;
-        }
-    }
-    covered * 2 > non_space
 }
 
 // ---- citation-closure -------------------------------------------------------

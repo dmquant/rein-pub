@@ -535,178 +535,60 @@ fn inv14__fact_vs_forecast__post_cutoff_fact_fails() {
         "{verdict:?}"
     );
 
-    // Prose face: a bare post-cutoff year in memo prose fails; marked
-    // forecast lines pass.
-    let memo_bad = b"Revenue will be huge in 2027.".to_vec();
+    // The prose face is RETIRED (2026-08-21). Its record as a gate was
+    // zero true positives and seven false positives — a bare fiscal fact, a
+    // cited reported fiscal quarter, a cited management-forward statement,
+    // the method's own falsifier line, a scenario table row, a keyword list,
+    // and a section heading. Enforcement of invariant 14 rests on the
+    // claims.json face asserted above, which is exact: `kind` and
+    // `about_time` are declared, so a post-cutoff fact fails with no
+    // heuristics and nothing to except.
+    //
+    // These four shapes are legitimate documents and MUST NOT block:
     let artifact_md = rein_core::context_pack::RequiredArtifact {
         name: "memo.md".into(),
         media_type: "text/markdown".into(),
         schema_ref: None,
         min_bytes: None,
     };
-    let v_bad = reg.run(
+    for legitimate in [
+        &b"### Consensus Growth Model (FY2027-FY2030)"[..],
+        &b"| Bear | agentic surge stalls | drops below 66.00% in FY2027 |"[..],
+        &b"`AAPL`, `Consensus Estimates FY2027-FY2030`, `Capital Allocation`."[..],
+        &b"Gross margin rebounded to 74.93% in Q1 FY2027 [3], reported April 2026."[..],
+    ] {
+        let bytes = legitimate.to_vec();
+        let v = reg.run(
+            &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
+            &rein_runtime::validators::ValidationInput {
+                artifact: &artifact_md,
+                bytes: &bytes,
+                all_artifacts: &all,
+                pack: &pack,
+            },
+        );
+        assert!(
+            matches!(v, ValidatorVerdict::Passed),
+            "legitimate prose must not block: {}",
+            String::from_utf8_lossy(legitimate)
+        );
+    }
+    // Stated cost of the retirement, asserted so it cannot be forgotten:
+    // free-text prose is no longer scanned, so an unfalsifiable sentence that
+    // never reaches claims.json is no longer caught here. Restoring a scan
+    // requires an ADVISORY verdict (proposed in the build room) — never a
+    // gate with this one's record.
+    let unscanned = b"Revenue reaches $400B in 2029.".to_vec();
+    let v_unscanned = reg.run(
         &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
         &rein_runtime::validators::ValidationInput {
             artifact: &artifact_md,
-            bytes: &memo_bad,
+            bytes: &unscanned,
             all_artifacts: &all,
             pack: &pack,
         },
     );
-    assert!(matches!(v_bad, ValidatorVerdict::Failed { .. }));
-    let memo_ok = b"We forecast strong growth into 2027.".to_vec();
-    let v_ok = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_ok,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(matches!(v_ok, ValidatorVerdict::Passed));
-    // Historicity face: fiscal labels run ahead of the calendar — a
-    // fiscal-2027 quarter already reported before the cutoff is history,
-    // not the 2027-claim class, when the sentence says so.
-    let memo_reported = b"Q1 FY2027 revenue was $44.1B, reported April 2026 [1].".to_vec();
-    let v_reported = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_reported,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(
-        matches!(v_reported, ValidatorVerdict::Passed),
-        "{v_reported:?}"
-    );
-    // Fiscal-label face: a cited fiscal quarter one year ahead of the
-    // calendar is a filed quarter, not the 2027-claim class …
-    let memo_fiscal = b"Gross margin rebounded to 74.93% in Q1 FY2027 [3].".to_vec();
-    let v_fiscal = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_fiscal,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(matches!(v_fiscal, ValidatorVerdict::Passed), "{v_fiscal:?}");
-    // … but only that exact shape: an uncited fiscal line still marks,
-    let memo_uncited = b"Margins recover in Q2 FY2027.".to_vec();
-    let v_uncited = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_uncited,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(
-        matches!(v_uncited, ValidatorVerdict::Failed { .. }),
-        "{v_uncited:?}"
-    );
-    // and a cited far-year line delegates to its capture — the evidence
-    // trail exists, which is what the invariant protects. Boundary
-    // recorded 2026-08-20 after three same-validator failures on
-    // legitimate cited shapes.
-    let memo_far = b"We see 80% margins in Q1 FY2029 [3].".to_vec();
-    let v_far = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_far,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(matches!(v_far, ValidatorVerdict::Passed), "{v_far:?}");
-    // The bare unfalsifiable form still dies, at any distance.
-    let memo_bare = b"Data-center revenue reaches $400B in 2029.".to_vec();
-    let v_bare = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_bare,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(
-        matches!(v_bare, ValidatorVerdict::Failed { .. }),
-        "{v_bare:?}"
-    );
-    // The method's own vocabulary marks its lines: a falsifier is
-    // forward-conditional by construction.
-    let memo_falsifier = b"* Falsifier: growth decelerates below 25% prior to FY2029.".to_vec();
-    let v_fals = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_falsifier,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(matches!(v_fals, ValidatorVerdict::Passed), "{v_fals:?}");
-    // Structure is not prose (second diagnosis, 2026-08-21): a scenario
-    // TABLE ROW inherits its marking from the header row …
-    let memo_table = b"| Bear | agentic surge stalls | drops below 66.00% in FY2027 |".to_vec();
-    let v_table = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_table,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(matches!(v_table, ValidatorVerdict::Passed), "{v_table:?}");
-    // … a keyword/tag line asserts nothing …
-    let memo_tags =
-        b"`AAPL`, `Apple Silicon M5`, `Capital Allocation`, `Consensus Estimates FY2027-FY2030`."
-            .to_vec();
-    let v_tags = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_tags,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(matches!(v_tags, ValidatorVerdict::Passed), "{v_tags:?}");
-    // … and fenced code is not an assertion either.
-    let memo_fence = b"```\nrevenue_2029 = 1000\n```".to_vec();
-    let v_fence = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_fence,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(matches!(v_fence, ValidatorVerdict::Passed), "{v_fence:?}");
-    // The unfalsifiable prose assertion still dies — the protection is intact.
-    let memo_still = b"Revenue reaches $400B in 2029.".to_vec();
-    let v_still = reg.run(
-        &ValidatorRef::parse("fact-vs-forecast@1").unwrap(),
-        &rein_runtime::validators::ValidationInput {
-            artifact: &artifact_md,
-            bytes: &memo_still,
-            all_artifacts: &all,
-            pack: &pack,
-        },
-    );
-    assert!(
-        matches!(v_still, ValidatorVerdict::Failed { .. }),
-        "{v_still:?}"
-    );
+    assert!(matches!(v_unscanned, ValidatorVerdict::Passed));
 }
 
 /// Invariants 17/18 — a citation resolves to captured bytes or fails; a word

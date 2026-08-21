@@ -24,7 +24,7 @@ Status: **all 33 rows green** (2026-08-19, M0–M5 landed in sequence).
 | 11 | Hand-internal retries disabled; `attempts` recorded | **M2** ✅ | `hands::AgyHand` (single-shot by construction; attempts recorded) | `inv11_26__agy_hand__…` (m2_acceptance). Deviation recorded: rein ships its own agy adapter instead of consuming the estate model crate (whose retry loops violate this invariant) |
 | 12 | Every stage checkpoints; `--resume`; nothing non-resumable | **M2** ✅ | per-phase receipt persistence + `selection::task_satisfied`-driven plan sweep | `inv12__plan_sweep_resume__…` (m2_acceptance) |
 | 13 | PIT: past-cutoff epochs read own-CAS only; eval/production modes | **M2** ✅ | `capture::ensure_live_permitted`, `capture::capture_admissible` | `inv13__capture_ensure_live_permitted__…` (m2_acceptance) |
-| 14 | Temporal leakage is a validator | **M2** ✅ | validator `fact-vs-forecast@1` | `inv14__fact_vs_forecast__…` (m2_acceptance) |
+| 14 | Temporal leakage is a validator | **M2** ✅ | validator `fact-vs-forecast@1` — enforcement is the **claims.json face** (declared `kind` + `about_time`); the free-text prose face was retired 2026-08-21 after 0 true / 7 false positives as a gate, with the cost asserted in the test | `inv14__fact_vs_forecast__…` (m2_acceptance) |
 | 15 | knowledge_cutoff advisory, stamped honestly | **M2** ✅ | engine environment receipt (advisory note on hand_internal_network runs) | covered in engine notes; pane rendering owed M4 |
 | 16 | Numeric datum carries its time axes or the tool refuses | **M2** ✅ | `datum::Stamped::new` | `inv16__datum_stamped_new__…` (m2_acceptance) |
 | 17 | Captured bytes or claims degrade to unresolved | **M2** ✅ | validator `citation-closure@1` | `inv17_18__citation_closure__…` (m2_acceptance) |
