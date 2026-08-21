@@ -258,7 +258,9 @@ flowchart LR
     G --> S["rein eval financegym<br/>score + bootstrap CI"]
 ```
 
-Headline: **99.4%** (95% CI 98.5–100). Rein's honesty rules apply to its
+Headline: **99.4%** (95% CI 98.5–100) — *and it did not survive contact
+with a second opinion; see the correction below.* Rein's honesty rules
+apply to its
 own report card, so three qualifications are filed next to the number.
 *First*, the judge is from the same model family as the student and had
 no answer key — the score is an upper bound, not a result. *Second*, the
@@ -269,6 +271,27 @@ demonstrate real discrimination: it caught an answer that accepted a
 trick question's false premise, one that cited information from after
 its knowledge cutoff, and one that transposed years — tiers 0, 0, and 2
 respectively, reasons on file.
+
+**The correction, one day later.** The same 398 answers were re-graded by a
+judge from a *different* model family. On the 263 questions both judges
+ruled on, the same-family judge scored 0.994 and the disjoint judge scored
+0.823 — and the disagreement was almost entirely one-directional: the
+disjoint judge marked *lower* on 158 questions and higher on exactly one.
+Random disagreement is symmetric; this was not random.
+
+The reason is the interesting part. The disjoint judge's filed reasons
+repeatedly flag *fabricated or unverifiable specifics* — an exact interest
+rate, precise regulatory filing details, a suspiciously tidy dollar range —
+where the same-family judge read the identical sentences as "well-supported
+financial metrics." The two graders did not disagree about writing style.
+They disagreed about **whether invented precision counts as evidence** —
+which is the exact failure this whole project exists to make impossible.
+The upper bound was an upper bound, and it behaved like one.
+
+(The precise corrected *level* is still open: the second judge's provider
+cut it off at question 263, so that sample is a prefix rather than a fair
+draw, and a third grader is running. The direction is settled; the number
+is not, and saying so is the point.)
 
 **Valuations moved to evidence.** The operator ruled the old flat growth
 guess too timid to mean anything, and growth became a provenance-ordered
