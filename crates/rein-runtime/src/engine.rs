@@ -878,13 +878,29 @@ impl<'a> Engine<'a> {
 
     /// Retry under the byte-identical pack (recovery action 2), optionally
     /// rebinding the executor (C2 amendment), then execute.
+    /// Operational retry (invariant 6). The hand DEFAULTS TO THE ORIGINAL
+    /// attempt's hand, never to the workspace default: found 2026-08-21 when
+    /// recovering a real research attempt silently re-ran it on a fixture
+    /// hand and reported `artifact_invalid` for a reason that had nothing to
+    /// do with the original work. A recovery must not quietly change the
+    /// executor; `hand_override` remains available for a deliberate change.
     pub fn retry(
         &mut self,
         prior: &AttemptId,
         hand_override: Option<&str>,
     ) -> Result<ExecutionReport, EngineError> {
         let row = self.store.get_attempt(prior)?;
-        self.run_task(&row.task_ref, hand_override, Some(prior.clone()))
+        let original = self.original_hand(&row.context_pack_id);
+        let hand = hand_override.or(original.as_deref());
+        self.run_task(&row.task_ref, hand, Some(prior.clone()))
+    }
+
+    /// The hand an attempt's frozen pack recorded, when the pack is readable.
+    fn original_hand(&self, pack_id: &rein_core::ids::ContextPackId) -> Option<String> {
+        self.store
+            .get_pack(pack_id)
+            .ok()
+            .map(|p| p.hand.selector.clone())
     }
 
     /// PIT sanity used by data tools from M2 on; here from M1 so the rule has

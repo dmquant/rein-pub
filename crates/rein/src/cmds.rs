@@ -1618,7 +1618,7 @@ pub fn evidence_verify(_ctx: &Ctx, path: &str) -> CmdResult {
     })
 }
 
-pub fn attempt_recover(ctx: &Ctx, id: &str, action: Option<&str>) -> CmdResult {
+pub fn attempt_recover(ctx: &Ctx, id: &str, action: Option<&str>, hand: Option<&str>) -> CmdResult {
     let aid = attempt_id(id)?;
     match action {
         None => {
@@ -1644,11 +1644,13 @@ pub fn attempt_recover(ctx: &Ctx, id: &str, action: Option<&str>) -> CmdResult {
             Ok(CmdOutput::ok(j(&mine)))
         }
         Some("resume-commit") => ctx.with_engine(|engine| {
-            let report = engine.resume_attempt(&aid, None)?;
+            let report = engine.resume_attempt(&aid, hand)?;
             Ok(CmdOutput::ok(report_json(&report)))
         }),
+        // No `--hand`: the ORIGINAL hand is reused, never the workspace
+        // default — a recovery must not silently change the executor.
         Some("retry") => ctx.with_engine(|engine| {
-            let report = engine.retry(&aid, None)?;
+            let report = engine.retry(&aid, hand)?;
             Ok(CmdOutput::ok(report_json(&report)))
         }),
         Some("close-unknown") => attempt_close(ctx, id, "closed_as_unknown_by_operator"),

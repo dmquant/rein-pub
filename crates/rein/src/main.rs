@@ -440,6 +440,10 @@ enum AttemptCmd {
         id: String,
         #[arg(long)]
         action: Option<String>,
+        /// Deliberately change the executor for this recovery (default:
+        /// the attempt's original hand)
+        #[arg(long)]
+        hand: Option<String>,
     },
     /// Operational retry under the byte-identical ContextPack (invariant 6)
     Retry {
@@ -603,7 +607,9 @@ fn dispatch(cli: &Cli, ctx: &Ctx) -> Result<CmdOutput, CliError> {
             AttemptCmd::Show { id } => cmds::attempt_show(ctx, id),
             AttemptCmd::Watch { id } => cmds::attempt_watch(ctx, id),
             AttemptCmd::Cancel { id } => cmds::attempt_cancel(ctx, id),
-            AttemptCmd::Recover { id, action } => cmds::attempt_recover(ctx, id, action.as_deref()),
+            AttemptCmd::Recover { id, action, hand } => {
+                cmds::attempt_recover(ctx, id, action.as_deref(), hand.as_deref())
+            }
             AttemptCmd::Retry { id, hand } => cmds::attempt_retry(ctx, id, hand.as_deref()),
             AttemptCmd::Close { id, reason } => cmds::attempt_close(ctx, id, reason),
         },

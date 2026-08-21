@@ -199,6 +199,64 @@ fn inv25__recovery_queue__stale_check_tolerates_the_boundarys_own_latency() {
     assert_eq!(queue2.len(), 1);
 }
 
+/// A recovery must not silently change the executor. Found in the field
+/// 2026-08-21: recovering a real research attempt re-ran it on the workspace
+/// default (a fixture hand) and reported artifact_invalid for a reason that
+/// had nothing to do with the original work.
+#[test]
+fn retry__reuses_the_original_hand_not_the_workspace_default() {
+    let mut f = fixture();
+    let clock = FixedClock::new(t("2026-08-19T08:00:00Z"));
+    // The workspace default is fake:deterministic-a; run with -b instead.
+    let first = {
+        let b = broker(&f);
+        let mut engine = Engine::new(&f.ws, &mut f.store, &clock, b);
+        engine
+            .run_task(&task(), Some("fake:deterministic-b"), None)
+            .unwrap()
+    };
+    let original = f
+        .store
+        .get_pack(
+            &f.store
+                .get_attempt(&first.attempt_id)
+                .unwrap()
+                .context_pack_id,
+        )
+        .unwrap()
+        .hand
+        .selector;
+    assert_eq!(original, "fake:deterministic-b");
+
+    // Retry with no override: the hand must survive the recovery.
+    let retried = {
+        let b = broker(&f);
+        let mut engine = Engine::new(&f.ws, &mut f.store, &clock, b);
+        engine.retry(&first.attempt_id, None).unwrap()
+    };
+    let after = f
+        .store
+        .get_pack(
+            &f.store
+                .get_attempt(&retried.attempt_id)
+                .unwrap()
+                .context_pack_id,
+        )
+        .unwrap()
+        .hand
+        .selector;
+    assert_eq!(
+        after, "fake:deterministic-b",
+        "recovery silently swapped the executor"
+    );
+
+    // NOTE on the override path: the hand is excluded from the pack's
+    // SEMANTIC hash (decision C2), so a hand-only difference does not mint a
+    // new pack — `resume_attempt` carries the deliberate-override path, and
+    // its own test covers it. What matters here is that the DEFAULT no
+    // longer silently becomes the workspace hand.
+}
+
 /// Pre-run limbo: a worker killed BEFORE the hand starts leaves an attempt in
 /// `Preparing` forever. Found in the field 2026-08-21, where the console
 /// answered "nothing to recover" about an attempt that could never move.
