@@ -1459,11 +1459,31 @@ pub fn data_pull_equity(ctx: &Ctx, symbol: &str, kinds: &str) -> CmdResult {
             Err(err) => warnings.push(format!("data.equity.transcripts: {err}")),
         }
     }
+    let refusal = pull_refusal_exit(results.len(), &warnings);
     let mut out = CmdOutput::ok(Value::Array(results));
     for w in warnings {
         out = out.warn(w);
     }
-    Ok(out)
+    // A pull that captured NOTHING asserts nothing: exit 0 here would be the
+    // founding failure of this project wearing a data-tool costume (a process
+    // exits 0 having produced no bytes, and the caller reads success).
+    Ok(match refusal {
+        Some(code) => out.with_exit(code),
+        None => out,
+    })
+}
+
+/// The exit decision for a pull: `None` keeps exit 0, `Some(code)` refuses.
+/// Pure so the contract is testable without a provider.
+pub(crate) fn pull_refusal_exit(captured: usize, warnings: &[String]) -> Option<ExitCode> {
+    if captured > 0 || warnings.is_empty() {
+        return None;
+    }
+    if warnings.iter().any(|w| w.contains("PIT refusal")) {
+        Some(ExitCode::PolicyDenied)
+    } else {
+        Some(ExitCode::Transport)
+    }
 }
 
 pub fn data_search(ctx: &Ctx, query: &str) -> CmdResult {
@@ -2322,4 +2342,24 @@ pub fn eval_answers(
         ));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod pull_exit_tests {
+    use super::*;
+
+    #[test]
+    fn all_refused_is_never_exit_zero() {
+        let pit =
+            vec!["data.equity.fundamentals: PIT refusal: production (past cutoff) …".to_string()];
+        // Nothing captured, every kind refused by policy: exit 7, not 0.
+        assert_eq!(pull_refusal_exit(0, &pit), Some(ExitCode::PolicyDenied));
+        // Nothing captured for another reason: transport, still not 0.
+        let net = vec!["data.equity.quote: connection reset".to_string()];
+        assert_eq!(pull_refusal_exit(0, &net), Some(ExitCode::Transport));
+        // A partial pull still succeeded at something — warnings ride along.
+        assert_eq!(pull_refusal_exit(1, &pit), None);
+        // Nothing requested, nothing refused: not a failure.
+        assert_eq!(pull_refusal_exit(0, &[]), None);
+    }
 }
