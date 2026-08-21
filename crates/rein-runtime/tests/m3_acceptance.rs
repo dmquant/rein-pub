@@ -199,6 +199,84 @@ fn inv25__recovery_queue__stale_check_tolerates_the_boundarys_own_latency() {
     assert_eq!(queue2.len(), 1);
 }
 
+/// Pre-run limbo: a worker killed BEFORE the hand starts leaves an attempt in
+/// `Preparing` forever. Found in the field 2026-08-21, where the console
+/// answered "nothing to recover" about an attempt that could never move.
+/// No attempt may be invisible to the recovery console.
+#[test]
+fn recovery_queue__surfaces_attempts_stuck_before_the_hand_ever_ran() {
+    use rein_core::receipts::ReceiptLog;
+    use rein_core::state::{apply_transition, AttemptState, TransitionCauseRecord};
+
+    let mut f = fixture();
+    let created = t("2026-08-19T08:00:00Z");
+    let aid = rein_core::ids::AttemptId::parse("attempt_000999").unwrap();
+    f.store
+        .insert_attempt(&rein_core::entities::Attempt {
+            attempt_id: aid.clone(),
+            task_ref: task(),
+            context_pack_id: rein_core::ids::ContextPackId::parse("ctx_000999").unwrap(),
+            context_hash: rein_core::canon::Sha256Digest::of_bytes(b"pack"),
+            generation: 1,
+            created_at: created,
+        })
+        .unwrap();
+
+    // Walk the ledger to `preparing` and stop — exactly where a killed
+    // process leaves it.
+    let mut log = ReceiptLog::default();
+    let mut ids = f.store.id_gen().unwrap();
+    log.append(
+        &mut ids,
+        &aid,
+        created,
+        rein_core::receipts::ReceiptBody::AttemptCreated {
+            task_ref: task(),
+            context_pack_id: rein_core::ids::ContextPackId::parse("ctx_000999").unwrap(),
+            context_hash: rein_core::canon::Sha256Digest::of_bytes(b"pack"),
+            generation: 1,
+            idempotency_key: "stuck-preparing".to_string(),
+        },
+    );
+    for to in [AttemptState::Admitted, AttemptState::Preparing] {
+        apply_transition(
+            &mut log,
+            &mut ids,
+            &aid,
+            to,
+            TransitionCauseRecord::Advance,
+            created,
+        )
+        .unwrap();
+    }
+    f.store.persist_receipts_from(&log, 0).unwrap();
+    f.store.save_id_gen(&ids).unwrap();
+
+    // Within tolerance: not yet an anomaly — a preparing attempt is normal.
+    let fresh =
+        recovery_queue(&f.store, t("2026-08-19T08:00:30Z"), DEFAULT_STALE_AFTER_MS).unwrap();
+    assert!(
+        fresh.iter().all(|a| a.attempt_id != aid.as_str()),
+        "a freshly preparing attempt is not an anomaly"
+    );
+
+    // Past tolerance: it MUST surface, with the three safe actions and a
+    // diagnosis saying no hand ran (so retry is unambiguously safe).
+    let stale =
+        recovery_queue(&f.store, t("2026-08-19T09:00:00Z"), DEFAULT_STALE_AFTER_MS).unwrap();
+    let entry = stale
+        .iter()
+        .find(|a| a.attempt_id == aid.as_str())
+        .expect("a stuck pre-run attempt is never invisible to the console");
+    assert_eq!(entry.state, "Preparing");
+    assert_eq!(entry.actions.len(), 3);
+    assert!(
+        entry.diagnosis.contains("BEFORE the hand started"),
+        "{}",
+        entry.diagnosis
+    );
+}
+
 #[test]
 fn m3__resume_commit_reenters_same_attempt_new_generation_new_run() {
     let mut f = fixture();

@@ -105,6 +105,27 @@ pub fn recovery_queue(
                     });
                 }
             }
+            AttemptState::Created | AttemptState::Admitted | AttemptState::Preparing => {
+                // Pre-run limbo. Found 2026-08-21 by a killed process leaving
+                // an attempt in `Preparing`: the console answered "nothing to
+                // recover" about an attempt that could never move again. The
+                // whole point of this queue is that no attempt is left in
+                // limbo, so the pre-run states are surfaced too — and their
+                // diagnosis is *better* than the running case, because no
+                // hand ever started: no artifacts can exist, so resume-commit
+                // has nothing to resume and retry is unambiguously safe.
+                if age_ms > stale_after_ms {
+                    out.push(AnomalyReport {
+                        attempt_id: aid.as_str().to_string(),
+                        anomaly: AnomalyKind::StaleRun,
+                        state: format!("{state:?}"),
+                        diagnosis: format!(
+                            "no receipts for {age_ms}ms (tolerance {stale_after_ms}ms) in {state:?} — the worker died BEFORE the hand started; no artifacts can exist, so retry is safe and resume-commit has nothing to resume"
+                        ),
+                        actions: ACTIONS,
+                    });
+                }
+            }
             _ => {}
         }
     }
